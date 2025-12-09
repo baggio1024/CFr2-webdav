@@ -1,7 +1,13 @@
-export function generateHTML(title: string, items: { name: string; href: string }[], currentPath = '/'): string {
+export function generateHTML(
+	title: string,
+	items: { name: string; href: string }[],
+	currentPath = '/',
+	allowDemo = false,
+): string {
 	// The heavy UI logic runs on the client; we pass minimal initial data to avoid duplicate fetch.
 	const initialItems = JSON.stringify(items || []);
 	const safeTitle = title || 'R2 WebDAV';
+	const demoFlag = allowDemo ? 'true' : 'false';
 
 	return `
 <!DOCTYPE html>
