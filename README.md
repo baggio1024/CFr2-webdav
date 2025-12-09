@@ -17,7 +17,7 @@
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/amm10090/CFr2-webdav)
 
-注需要有Cloudflare账户才能使用此功能。如果您还没有账户，可以在[Cloudflare官www.cloudflare.com)注册。
+注需要有 Cloudflare 账户才能使用此功能。如果您还没有账户，可以在 [Cloudflare 官网](https://www.cloudflare.com) 注册。
 
 ## 手动部署步骤 [Githut Actions]
 
@@ -25,14 +25,26 @@
 
 ### 前提条件
 
-- Cloudflare 账户
+- Cloudflare 账户（需有目标 Account ID）
 - 已创建的 R2 存储桶
 - GitHub 账户
 
-### 步骤 1: 配置 Cloudflare
+### 步骤 1: 准备 Cloudflare 凭据
 
-1. 【获取API令牌】在 Cloudflare 仪表板中，创建一个新的 API 令牌，确保它有足够的权限来管理编辑Workers(和 R2)。
-2. 【获取桶名称】创建的 R2 存储桶
+1. 进入 Cloudflare 仪表盘 → **My Profile → API Tokens → Create Token**，选择模板 **“Edit Cloudflare Workers”**，并确认勾选/包含下列最小权限：
+   - User / Memberships: Read
+   - Account / Workers Scripts: Edit
+   - Account / Workers R2 Storage: Edit
+   - （可选）Account / Workers KV Storage: Edit（Wrangler 常用）
+   - （若使用自定义路由）Zone / Workers Routes: Edit
+2. 选择正确的 **Account**（与 `CLOUDFLARE_ACCOUNT_ID` 一致），生成 **用户 API Token**（不要用 Account Token）。
+3. 记下：`CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`，以及 R2 的 `BUCKET_NAME`。
+4. 验证 Token 权限（可选但推荐）：
+   ```bash
+   curl -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+        https://api.cloudflare.com/client/v4/user/tokens/verify
+   # 返回 result.status=="active" 且 scopes 中含上述权限即通过
+   ```
 
 ### 步骤 2: 准备仓库
 
@@ -44,21 +56,25 @@ https://github.com/amm10090/CFr2-webdav.git
 
 ### 步骤 3: 配置 GitHub Secrets
 
-在您的 GitHub 仓库中，转到 Settings -> Secrets and variables -> Actions，添加以下 secrets：
+在仓库 Settings → Secrets and variables → Actions 中添加：
 
-- `CLOUDFLARE_API_TOKEN`: 步骤1的 Cloudflare API 令牌 (必须)
-- `USERNAME`: WebDAV 服务器的用户名 （可选，默认为 \_user）
-- `PASSWORD`: WebDAV 服务器的密码 （可选，默认为 \_pass）
-- `BUCKET_NAME`: 的 R2 存储桶名称 （可选，默认为 bucket 如果与你实际的bucket不符，则GithubAction部署会失败）
+- `CLOUDFLARE_API_TOKEN`（必填，上述用户 API Token）
+- `CLOUDFLARE_ACCOUNT_ID`（必填，与 Token 账户一致）
+- `BUCKET_NAME`（必填，目标 R2 桶名）
+- `USERNAME`（可选，默认 `_user`）
+- `PASSWORD`（可选，默认 `_pass`）
 
 ### 步骤 4: 配置 GitHub Actions
 
 1. 在您的 GitHub 仓库设置中，启用 GitHub Actions。
 2. workflow 文件已经存在，请选择： .github/workflow/main.yml
 
-### 步骤 6: 触发部署
+### 步骤 4: 触发部署
 
-按上面操作完成后就会自动进行部署到CF Worker中，或将任何更改推送到 GitHub 仓库的 `main` 分支，或者手动运行 GitHub Actions 工作流。GitHub Actions 将自动触发部署流程。
+完成 Secrets 配置后，推送到 `main` 或在 Actions 页面手动 “Re-run jobs”，workflow 会：
+- 校验 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`
+- 生成 `wrangler.toml`
+- 使用 Wrangler 4.53.0 部署到 Cloudflare Workers
 
 您可以在 GitHub 仓库的 Actions 标签页中查看部署进度。部署成功后，您可以在 Cloudflare Workers 仪表板中找到您的 Worker URL。
 
