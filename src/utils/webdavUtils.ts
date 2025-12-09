@@ -5,7 +5,14 @@ import { WebDAVProps } from '../types';
 export function make_resource_path(request: Request): string {
 	const url = new URL(request.url);
 	const normalized = url.pathname.replace(/\/+/g, '/'); // 合并重复斜杠，避免 "//file" 导致路径解析异常
-	return decodeURIComponent(normalized.slice(1));
+	const sliced = normalized.slice(1); // 去掉开头的斜杠
+	// 若 Worker 挂载在 /webdav 子路径，去掉该前缀以匹配 R2 的实际对象键
+	const withoutPrefix = sliced.startsWith('webdav/')
+		? sliced.slice('webdav/'.length)
+		: sliced === 'webdav'
+			? ''
+			: sliced;
+	return decodeURIComponent(withoutPrefix);
 }
 
 export async function* listAll(bucket: R2Bucket, prefix: string) {
