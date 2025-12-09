@@ -4,7 +4,8 @@ import { WebDAVProps } from '../types';
 
 export function make_resource_path(request: Request): string {
 	const url = new URL(request.url);
-	return decodeURIComponent(url.pathname.slice(1));
+	const normalized = url.pathname.replace(/\/+/g, '/'); // 合并重复斜杠，避免 "//file" 导致路径解析异常
+	return decodeURIComponent(normalized.slice(1));
 }
 
 export async function* listAll(bucket: R2Bucket, prefix: string) {
@@ -58,7 +59,14 @@ ${responses}
 }
 
 function generatePropResponse(bucketName: string, basePath: string, prop: WebDAVProps): string {
-	const resourcePath = `/${bucketName}/${basePath}${prop.displayname ? '/' + prop.displayname : ''}`;
+	// 规范化路径，避免出现多余的斜杠导致客户端发起 // 路径
+	const parts = [bucketName, basePath, prop.displayname || ''].filter((p) => p !== undefined);
+	const resourcePath =
+		'/' +
+		parts
+			.join('/')
+			.replace(/\/+/g, '/')
+			.replace(/\/$/, prop.resourcetype ? '/' : '');
 	return `  <D:response>
     <D:href>${resourcePath}</D:href>
     <D:propstat>
