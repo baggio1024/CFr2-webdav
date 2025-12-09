@@ -40,6 +40,11 @@ jobs:
       - name: Wrangler whoami (auth sanity check)
         run: npx wrangler whoami
 
+      - name: Build Tailwind CSS
+        run: |
+          npx @tailwindcss/cli -i ./src/styles/tailwind.css -o ./src/styles/tailwind.generated.css --minify
+          node scripts/embed-tailwind.js
+
       - name: Build & Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
