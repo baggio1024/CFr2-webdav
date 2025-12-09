@@ -1,3 +1,141 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Safelist for classes used in JavaScript template literals */
+/* TailwindCSS v4 uses @source inline() instead of safelist config */
+
+/* Background colors - Gray scale with dark mode */
+@source inline("{hover:,dark:,dark:hover:}bg-gray-{50,100,200,300,400,500,600,700,800,900,950}");
+@source inline("bg-{white,black}");
+
+/* Background colors - Other colors */
+@source inline("{hover:,dark:,dark:hover:}bg-blue-{50,100,400,500,600,700,800,900}");
+@source inline("{hover:,dark:}bg-red-{50,400,500,600,900}");
+@source inline("{hover:,dark:}bg-green-{500}");
+@source inline("{hover:,dark:}bg-amber-{400}");
+@source inline("{hover:,dark:}bg-purple-{500}");
+@source inline("{hover:,dark:}bg-yellow-{500}");
+@source inline("{hover:,dark:}bg-indigo-{600}");
+
+/* Text colors - Gray scale */
+@source inline("{hover:,dark:,dark:hover:,group-hover:}text-gray-{100,200,300,400,500,600,700,800,900}");
+@source inline("text-white");
+
+/* Text colors - Other colors */
+@source inline("{hover:,dark:,dark:hover:}text-blue-{400,500,600,800,900}");
+@source inline("{hover:,dark:}text-red-{400,500,600,700,800}");
+@source inline("{hover:,dark:}text-green-{500}");
+
+/* Border colors */
+@source inline("{hover:,focus:,dark:,dark:hover:}border-gray-{100,200,300,600,700,800}");
+@source inline("{hover:,focus:,dark:}border-blue-{400,500}");
+@source inline("border-{white,dashed}");
+
+/* Spacing - Padding */
+@source inline("p-{1,2,3,4,5,6}");
+@source inline("px-{3,4,5,6,8}");
+@source inline("py-{1,2,3,4}");
+@source inline("pt-{3}");
+@source inline("pb-{3}");
+@source inline("pl-{3,10}");
+@source inline("pr-{3}");
+
+/* Spacing - Margin */
+@source inline("m-{4}");
+@source inline("mx-{1,2,4,8,auto}");
+@source inline("my-{3}");
+@source inline("mt-{0,1,2,3}");
+@source inline("mb-{2,4,6}");
+@source inline("ml-{4}");
+@source inline("mr-{3}");
+
+/* Spacing - Gap and Space */
+@source inline("gap-{4}");
+@source inline("space-x-{1,2,3}");
+@source inline("space-y-{3,4,5}");
+
+/* Layout & Display */
+@source inline("block inline-block flex inline-flex grid hidden");
+@source inline("container fixed absolute relative sticky");
+@source inline("contents table");
+
+/* Flexbox */
+@source inline("flex-col flex-row flex-1 flex-shrink-0");
+@source inline("items-center items-start items-end");
+@source inline("justify-between justify-center justify-end justify-start");
+
+/* Grid */
+@source inline("grid-cols-{1,2,3,4,5,6}");
+
+/* Sizing */
+@source inline("w-{full,px,0,1,2,4,6,8,10,12,16,20,24,32,48,64}");
+@source inline("h-{full,px,6,10,12,16,20,24}");
+@source inline("min-h-{screen}");
+@source inline("max-h-{\\[80vh\\],\\[85vh\\]}");
+@source inline("max-w-{full,7xl,xl,sm,md,lg,2xl,3xl,4xl,5xl,6xl}");
+@source inline("min-w-{full}");
+
+/* Typography */
+@source inline("text-{xs,sm,base,lg,xl,2xl,3xl}");
+@source inline("font-{medium,semibold,bold,normal}");
+@source inline("text-{left,center,right}");
+@source inline("uppercase lowercase capitalize");
+@source inline("truncate whitespace-nowrap");
+@source inline("leading-{tight,normal,relaxed,loose,none,snug,5,6}");
+@source inline("tracking-{tight,wide}");
+
+/* Borders */
+@source inline("border border-{2,4} border-{b,t,l,r}");
+@source inline("border-{l,t,b,r}-{4}");
+@source inline("divide-y");
+
+/* Rounded corners */
+@source inline("rounded rounded-{sm,md,lg,xl,2xl,full}");
+
+/* Shadows */
+@source inline("{hover:,dark:}shadow-{sm,md,lg,xl,2xl}");
+
+/* Colors - Fill & Stroke */
+@source inline("fill-{blue,gray}-{50,900}");
+
+/* Overflow */
+@source inline("overflow-{hidden,x-auto,y-auto}");
+
+/* Opacity */
+@source inline("{hover:,group-hover:}opacity-{0,25,50,75,100}");
+
+/* Transform & Transitions */
+@source inline("transition transform");
+@source inline("{hover:,group-hover:}scale-{90,95,100,105,110}");
+
+/* Z-index */
+@source inline("z-{20,50,\\[55\\]}");
+
+/* Position & Inset */
+@source inline("inset-{0,y-0}");
+@source inline("top-{0,2,4} right-{2,4} bottom-{4} left-{0}");
+
+/* Cursor */
+@source inline("cursor-pointer");
+
+/* Pointer Events */
+@source inline("pointer-events-none");
+
+/* Animations */
+@source inline("animate-{spin,bounce,fade-in}");
+
+/* Focus & Hover states */
+@source inline("focus:outline-none focus:ring-2 focus:bg-{white,gray-800} focus:border-{blue-500}");
+@source inline("hover:bg-{gray-50,gray-100,gray-700,blue-50,blue-700,red-50,red-100}");
+@source inline("hover:text-{blue-600,blue-900,red-500,red-900,gray-600,gray-200}");
+
+/* Aspect Ratio */
+@source inline("aspect-{\\[4\\/5\\]}");
+
+/* Backdrop */
+@source inline("backdrop-blur-{sm}");
+
+/* Object Fit */
+@source inline("object-contain");
+
+/* Gradient */
+@source inline("bg-gradient-to-{br,r}");
