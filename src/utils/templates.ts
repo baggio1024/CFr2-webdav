@@ -263,7 +263,7 @@ export function generateHTML(
     const applyLightboxTransform = () => {
       const img = document.getElementById('lightbox-image');
       if (img) {
-        img.style.transform = `scale(${previewScale}) rotate(${previewRotation}deg)`;
+        img.style.transform = 'scale(' + previewScale + ') rotate(' + previewRotation + 'deg)';
       }
     };
 
