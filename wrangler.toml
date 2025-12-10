@@ -24,3 +24,14 @@ id = "your-rate-limit-kv-id"
 [[kv_namespaces]]
 binding = "QUOTA_KV"
 id = "your-quota-kv-id"
+
+[[kv_namespaces]]
+binding = "TOTP_KV"
+id = "your-totp-kv-id"
+
+# Optional: Dedicated KV for WebAuthn Passkeys (Stage 3)
+# If not configured, WebAuthn will fall back to TOTP_KV
+# Uncomment to create a separate namespace:
+# [[kv_namespaces]]
+# binding = "AUTH_KV"
+# id = "your-auth-kv-id"  # Run: wrangler kv:namespace create "AUTH_KV"

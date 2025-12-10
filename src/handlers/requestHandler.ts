@@ -10,6 +10,13 @@ import {
 	handle2FADisable,
 	handle2FAStatus,
 	handle2FAVerify,
+	handle2FARegenerateRecoveryCodes,
+	handlePasskeyRegisterStart,
+	handlePasskeyRegisterFinish,
+	handlePasskeyAuthStart,
+	handlePasskeyAuthFinish,
+	handlePasskeyList,
+	handlePasskeyDelete,
 } from '../utils/auth';
 import { setCORSHeaders } from '../utils/cors';
 import { logger } from '../utils/logger';
@@ -35,6 +42,19 @@ export async function handleRequest(request: Request, env: Env, ctx: ExecutionCo
 		// Handle 2FA verification during login (no full auth required, partial token only)
 		if (url.pathname === '/auth/2fa/verify' && request.method === 'POST') {
 			const response = await handle2FAVerify(request, env);
+			setCORSHeaders(response, request, env);
+			return response;
+		}
+
+		// Passkey authentication endpoints (no auth required)
+		if (url.pathname === '/auth/passkey/authenticate/start' && request.method === 'POST') {
+			const response = await handlePasskeyAuthStart(request, env);
+			setCORSHeaders(response, request, env);
+			return response;
+		}
+
+		if (url.pathname === '/auth/passkey/authenticate/finish' && request.method === 'POST') {
+			const response = await handlePasskeyAuthFinish(request, env);
 			setCORSHeaders(response, request, env);
 			return response;
 		}
@@ -101,6 +121,40 @@ export async function handleRequest(request: Request, env: Env, ctx: ExecutionCo
 			const response = await handle2FAStatus(request, env, authContext);
 			setCORSHeaders(response, request, env);
 			return response;
+		}
+
+		if (url.pathname === '/auth/2fa/recovery-codes/regenerate' && request.method === 'POST') {
+			const response = await handle2FARegenerateRecoveryCodes(request, env, authContext);
+			setCORSHeaders(response, request, env);
+			return response;
+		}
+
+		// Passkey management endpoints (require authentication)
+		if (url.pathname === '/auth/passkey/register/start' && request.method === 'POST') {
+			const response = await handlePasskeyRegisterStart(request, env, authContext);
+			setCORSHeaders(response, request, env);
+			return response;
+		}
+
+		if (url.pathname === '/auth/passkey/register/finish' && request.method === 'POST') {
+			const response = await handlePasskeyRegisterFinish(request, env, authContext);
+			setCORSHeaders(response, request, env);
+			return response;
+		}
+
+		if (url.pathname === '/auth/passkeys' && request.method === 'GET') {
+			const response = await handlePasskeyList(request, env, authContext);
+			setCORSHeaders(response, request, env);
+			return response;
+		}
+
+		if (url.pathname.startsWith('/auth/passkey/') && request.method === 'DELETE') {
+			const credentialId = url.pathname.split('/').pop();
+			if (credentialId) {
+				const response = await handlePasskeyDelete(request, env, authContext, credentialId);
+				setCORSHeaders(response, request, env);
+				return response;
+			}
 		}
 
 		// Pass authentication context to WebDAV handler

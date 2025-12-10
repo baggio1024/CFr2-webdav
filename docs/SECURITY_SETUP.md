@@ -219,6 +219,459 @@ Re-generate using Step 2.
 
 Verify `RATE_LIMIT_KV` is properly bound in `wrangler.toml` and the namespace ID is correct.
 
+## Stage 2: TOTP Two-Factor Authentication (2FA) ✅
+
+Stage 2 has been implemented! TOTP 2FA adds an additional layer of security by requiring a time-based one-time password from an authenticator app.
+
+### Setup Instructions
+
+1. **Create TOTP KV Namespace**:
+```bash
+wrangler kv:namespace create "TOTP_KV"
+```
+
+2. **Update wrangler.toml**:
+```toml
+[[kv_namespaces]]
+binding = "TOTP_KV"
+id = "your-totp-kv-id"  # From step 1
+```
+
+3. **Deploy the updated worker**:
+```bash
+npm run deploy
+```
+
+### Using 2FA
+
+**Setup 2FA (requires authentication)**:
+```bash
+curl -X POST https://your-worker.workers.dev/auth/2fa/setup \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+This returns:
+- TOTP secret
+- QR code URI (scan with Google Authenticator, Authy, etc.)
+- 10 recovery codes (store securely offline!)
+
+**Verify and enable 2FA**:
+```bash
+curl -X POST https://your-worker.workers.dev/auth/2fa/verify-setup \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"code":"123456"}'
+```
+
+**Login with 2FA**:
+1. First, login with username/password:
+```bash
+curl -X POST https://your-worker.workers.dev/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"your-password"}'
+```
+
+2. If 2FA is enabled, you'll receive a `partialToken`. Complete login with TOTP code:
+```bash
+curl -X POST https://your-worker.workers.dev/auth/2fa/verify \
+  -H "Content-Type: application/json" \
+  -d '{"partialToken":"PARTIAL_TOKEN","code":"123456"}'
+```
+
+Or use a recovery code:
+```bash
+curl -X POST https://your-worker.workers.dev/auth/2fa/verify \
+  -H "Content-Type: application/json" \
+  -d '{"partialToken":"PARTIAL_TOKEN","recoveryCode":"A3B2-C5D7"}'
+```
+
+**WebDAV Clients with 2FA**:
+WebDAV clients (Cyberduck, rclone, etc.) can use Basic Auth with additional headers:
+- `X-TOTP-Code`: Your 6-digit TOTP code
+- `X-Recovery-Code`: A recovery code (one-time use)
+
+Example with curl:
+```bash
+curl -u admin:your-password \
+  -H "X-TOTP-Code: 123456" \
+  https://your-worker.workers.dev/webdav/
+```
+
+**Manage 2FA**:
+```bash
+# Check 2FA status
+curl https://your-worker.workers.dev/auth/2fa/status \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+
+# Regenerate recovery codes (requires password)
+curl -X POST https://your-worker.workers.dev/auth/2fa/recovery-codes/regenerate \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"your-password"}'
+
+# Disable 2FA (requires password)
+curl -X POST https://your-worker.workers.dev/auth/2fa/disable \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"your-password"}'
+```
+
+### Security Features
+
+✅ **RFC 6238 TOTP** - Standard 30-second window with ±1 tolerance
+✅ **Recovery Codes** - 10 one-time use backup codes (PBKDF2 hashed)
+✅ **Multi-tier Rate Limiting** - Protects against brute-force attacks across IP/user/combination
+✅ **WebDAV Integration** - Works with Basic Auth via custom headers
+✅ **No Bypass** - 2FA is enforced on all authentication methods when enabled
+
+## Stage 3: WebAuthn Passkeys ✅
+
+Stage 3 implements passwordless authentication using WebAuthn Passkeys for the highest level of security and convenience.
+
+### Features
+
+- **Passwordless Login**: No password required - authenticate with biometrics or security keys
+- **Platform Authenticators**: Touch ID, Face ID, Windows Hello
+- **Cross-platform Authenticators**: YubiKey, security keys
+- **Multiple Algorithms**: ES256 (ECDSA P-256) and RS256 (RSA)
+- **Replay Protection**: Counter-based replay prevention
+- **Challenge-Response**: Cryptographic proof with 5-minute TTL
+- **Account Enumeration Protection**: Timing-safe responses
+- **Rate Limiting**: Multi-tier protection (10 attempts / 15 minutes)
+
+### Setup Instructions
+
+The WebAuthn implementation is already included in the codebase. No additional setup is required beyond what was done for Stages 1 and 2.
+
+**Optional**: Create a dedicated KV namespace for passkeys:
+```bash
+# Create AUTH_KV namespace
+wrangler kv:namespace create "AUTH_KV"
+
+# Add to wrangler.toml
+[[kv_namespaces]]
+binding = "AUTH_KV"
+id = "your-auth-kv-id"
+```
+
+If `AUTH_KV` is not configured, passkeys will automatically use the existing `TOTP_KV` namespace.
+
+### API Endpoints
+
+#### Registration (requires authentication)
+
+**Start Passkey Registration**:
+```bash
+curl -X POST https://your-worker.workers.dev/auth/passkey/register/start \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+Returns:
+```json
+{
+  "options": {
+    "challenge": "base64url-encoded-challenge",
+    "rp": { "name": "CFr2 WebDAV", "id": "your-worker.workers.dev" },
+    "user": { "id": "base64url-user-id", "name": "username", "displayName": "username" },
+    "pubKeyCredParams": [
+      { "type": "public-key", "alg": -7 },
+      { "type": "public-key", "alg": -257 }
+    ],
+    "timeout": 60000,
+    "attestation": "none"
+  },
+  "challengeId": "uuid"
+}
+```
+
+**Finish Passkey Registration** (called by client JavaScript):
+```bash
+curl -X POST https://your-worker.workers.dev/auth/passkey/register/finish \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "credential": { /* PublicKeyCredential from navigator.credentials.create() */ },
+    "challengeId": "uuid",
+    "name": "My iPhone"
+  }'
+```
+
+#### Authentication (no authentication required)
+
+**Start Passkey Authentication**:
+```bash
+curl -X POST https://your-worker.workers.dev/auth/passkey/authenticate/start \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin"}'
+```
+
+Returns:
+```json
+{
+  "options": {
+    "challenge": "base64url-encoded-challenge",
+    "timeout": 60000,
+    "rpId": "your-worker.workers.dev",
+    "allowCredentials": [
+      { "type": "public-key", "id": "base64url-credential-id" }
+    ],
+    "userVerification": "preferred"
+  },
+  "challengeId": "uuid"
+}
+```
+
+**Finish Passkey Authentication** (called by client JavaScript):
+```bash
+curl -X POST https://your-worker.workers.dev/auth/passkey/authenticate/finish \
+  -H "Content-Type": application/json" \
+  -d '{
+    "credential": { /* PublicKeyCredential from navigator.credentials.get() */ },
+    "challengeId": "uuid"
+  }'
+```
+
+Returns JWT tokens:
+```json
+{
+  "success": true,
+  "accessToken": "jwt-access-token",
+  "refreshToken": "jwt-refresh-token",
+  "user": { "username": "admin" },
+  "expiresIn": 900
+}
+```
+
+#### Management (requires authentication)
+
+**List Passkeys**:
+```bash
+curl https://your-worker.workers.dev/auth/passkeys \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+**Delete Passkey**:
+```bash
+curl -X DELETE https://your-worker.workers.dev/auth/passkey/CREDENTIAL_ID \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### Browser Client Example
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebAuthn Passkey Demo</title>
+</head>
+<body>
+    <h1>Passkey Authentication</h1>
+    <button onclick="registerPasskey()">Register Passkey</button>
+    <button onclick="authenticatePasskey()">Login with Passkey</button>
+
+    <script>
+        const API_BASE = 'https://your-worker.workers.dev';
+        let accessToken = localStorage.getItem('accessToken');
+
+        async function registerPasskey() {
+            if (!accessToken) {
+                alert('Please login first with password');
+                return;
+            }
+
+            // Start registration
+            const startResp = await fetch(`${API_BASE}/auth/passkey/register/start`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+            const { options, challengeId } = await startResp.json();
+
+            // Convert base64url to ArrayBuffer
+            options.challenge = base64urlToBuffer(options.challenge);
+            options.user.id = base64urlToBuffer(options.user.id);
+
+            // Create credential
+            const credential = await navigator.credentials.create({ publicKey: options });
+
+            // Finish registration
+            const finishResp = await fetch(`${API_BASE}/auth/passkey/register/finish`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    credential: credentialToJSON(credential),
+                    challengeId,
+                    name: 'My Device'
+                })
+            });
+
+            const result = await finishResp.json();
+            alert(result.message || 'Passkey registered!');
+        }
+
+        async function authenticatePasskey() {
+            const username = prompt('Username:');
+            if (!username) return;
+
+            // Start authentication
+            const startResp = await fetch(`${API_BASE}/auth/passkey/authenticate/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username })
+            });
+            const { options, challengeId } = await startResp.json();
+
+            // Convert base64url to ArrayBuffer
+            options.challenge = base64urlToBuffer(options.challenge);
+            options.allowCredentials = options.allowCredentials.map(c => ({
+                ...c,
+                id: base64urlToBuffer(c.id)
+            }));
+
+            // Get credential
+            const credential = await navigator.credentials.get({ publicKey: options });
+
+            // Finish authentication
+            const finishResp = await fetch(`${API_BASE}/auth/passkey/authenticate/finish`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    credential: credentialToJSON(credential),
+                    challengeId
+                })
+            });
+
+            const result = await finishResp.json();
+            if (result.accessToken) {
+                accessToken = result.accessToken;
+                localStorage.setItem('accessToken', accessToken);
+                alert('Authenticated successfully!');
+            }
+        }
+
+        function base64urlToBuffer(base64url) {
+            const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function bufferToBase64url(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+        }
+
+        function credentialToJSON(credential) {
+            return {
+                id: credential.id,
+                rawId: bufferToBase64url(credential.rawId),
+                response: {
+                    clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+                    attestationObject: credential.response.attestationObject
+                        ? bufferToBase64url(credential.response.attestationObject)
+                        : undefined,
+                    authenticatorData: credential.response.authenticatorData
+                        ? bufferToBase64url(credential.response.authenticatorData)
+                        : undefined,
+                    signature: credential.response.signature
+                        ? bufferToBase64url(credential.response.signature)
+                        : undefined
+                },
+                type: credential.type
+            };
+        }
+    </script>
+</body>
+</html>
+```
+
+### Browser Support
+
+- **Chrome/Edge**: Full support (version 67+)
+- **Safari (macOS/iOS)**: Full support (version 13+)
+- **Firefox**: Full support (version 60+)
+
+### Security Features
+
+✅ **RFC WebAuthn Compliant** - Standard-compliant implementation
+✅ **Multi-tier Rate Limiting** - 10 attempts / 15 minutes, 1-hour block
+✅ **Account Enumeration Protection** - Timing-safe responses prevent user enumeration
+✅ **Counter-based Replay Protection** - Prevents replay attacks
+✅ **Challenge TTL** - 5-minute expiration for challenges
+✅ **RP ID Verification** - Origin and domain validation
+✅ **Cryptographic Signatures** - ES256 and RS256 support
+✅ **No Password Storage** - Public key cryptography
+✅ **Phishing Resistant** - Domain-bound credentials
+
+### Troubleshooting
+
+#### "Challenge not found or expired"
+
+**Cause**: Challenge has expired (5-minute TTL) or already been used
+
+**Solution**: Start the registration/authentication flow again from the beginning
+
+#### "Too many authentication attempts"
+
+**Cause**: Rate limit triggered (10 attempts in 15 minutes)
+
+**Solution**: Wait for the time specified in the `Retry-After` header (up to 1 hour)
+
+#### "rpIdHash mismatch"
+
+**Cause**: `WORKER_URL` environment variable doesn't match the actual domain
+
+**Solution**: Ensure `WORKER_URL` in wrangler.toml matches the domain you're accessing
+
+#### "Signature verification failed"
+
+**Cause**: Corrupted public key or tampered credential
+
+**Solution**: Delete the passkey and register a new one
+
+#### WebAuthn API not available
+
+**Cause**: Browser doesn't support WebAuthn or page not served over HTTPS
+
+**Solution**:
+- For local development: Use `localhost` (HTTP allowed)
+- For production: Must use HTTPS
+- Check browser compatibility
+
+#### Passkey works on one device but not another
+
+**Cause**: Platform authenticators (Touch ID, Face ID) are device-specific
+
+**Solution**: Register separate passkeys for each device, or use a cross-platform security key (YubiKey)
+
+### Authentication Methods Comparison
+
+| Method | Security | Convenience | Phishing Resistant |
+|--------|----------|-------------|-------------------|
+| Password only | ⭐⭐ | ⭐⭐⭐ | ❌ |
+| Password + TOTP | ⭐⭐⭐⭐ | ⭐⭐ | ❌ |
+| Passkey | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ |
+
+### Next Steps with Stage 3
+
+After completing all three stages, your CFr2-webdav has multiple authentication options:
+
+1. **Traditional**: Password-only login (Stage 1)
+2. **Two-Factor**: Password + TOTP (Stages 1 + 2)
+3. **Passwordless**: Passkey-only login (Stage 3)
+4. **Mixed**: Users can enable 2FA and still use passkeys
+
+Users can choose the authentication method that best fits their security and convenience needs.
+
 ## Next Steps
 
 - **Stage 2**: TOTP Two-Factor Authentication (2FA)

@@ -1,5 +1,14 @@
 // 文件名：src/utils/auth.ts
-import type { Env, AuthContext, TwoFactorData } from '../types';
+import type {
+	Env,
+	AuthContext,
+	TwoFactorData,
+	PasskeyCredential,
+	PasskeyRegisterFinishRequest,
+	PasskeyAuthStartRequest,
+	PasskeyAuthFinishRequest,
+	PasskeyListItem,
+} from '../types';
 import { verifyPassword } from './crypto';
 import { verifyToken, extractToken, generateAccessToken, generateRefreshToken, generatePartialToken } from './jwt';
 import {
@@ -12,11 +21,30 @@ import {
 } from './rateLimit';
 import { generateTOTPSecret, verifyTOTP, generateTOTPUri, TOTP_DIGITS } from './totp';
 import { generateRecoveryCodes, hashRecoveryCode, verifyRecoveryCode } from './recoveryCodes';
+import {
+	generateChallenge,
+	saveChallenge,
+	getChallenge,
+	deleteChallenge,
+	generateRegistrationOptions,
+	verifyRegistrationResponse,
+	generateAuthenticationOptions,
+	verifyAuthenticationResponse,
+	base64urlEncode,
+	base64urlDecode,
+} from './webauthn';
 
 // 2FA 验证尝试限流（5 次 / 10 分钟，封禁 1 小时）
 const TWO_FA_VERIFY_RATE_LIMIT = {
 	maxAttempts: 5,
 	windowMs: 10 * 60 * 1000,
+	blockDurationMs: 60 * 60 * 1000,
+};
+
+// Passkey 认证限流（10 次 / 15 分钟，封禁 1 小时）
+const PASSKEY_AUTH_RATE_LIMIT = {
+	maxAttempts: 10,
+	windowMs: 15 * 60 * 1000,
 	blockDurationMs: 60 * 60 * 1000,
 };
 
@@ -121,7 +149,97 @@ async function authenticateBasic(authHeader: string, env: Env, request: Request)
 			return null;
 		}
 
-		// Successful authentication - reset rate limit
+		// Check if 2FA is enabled - must verify TOTP/recovery code in Basic Auth
+		const twoFactorData = await get2FAData(env, username);
+		if (twoFactorData?.totpEnabled) {
+			// Extract 2FA credentials from custom headers
+			const totpCode = request.headers.get('X-TOTP-Code')?.trim();
+			const recoveryCode = request.headers.get('X-Recovery-Code')?.trim();
+
+			// Multi-tier 2FA rate limiting (IP / User / Combo) to prevent distributed attacks
+			// Similar to login rate limiting, but only increments combo key
+			const clientId = getClientIdentifier(request);
+			const keyIp = `2fa-basic:ip:${clientId}`;
+			const keyUser = `2fa-basic:user:${username}`;
+			const keyCombo = `2fa-basic:user-ip:${username}:${clientId}`;
+
+			// Phase 1: Read-only check all keys
+			const [ipStatus, userStatus, comboStatus] = await Promise.all([
+				getRateLimitStatus(env.RATE_LIMIT_KV, keyIp, TWO_FA_VERIFY_RATE_LIMIT),
+				getRateLimitStatus(env.RATE_LIMIT_KV, keyUser, TWO_FA_VERIFY_RATE_LIMIT),
+				getRateLimitStatus(env.RATE_LIMIT_KV, keyCombo, TWO_FA_VERIFY_RATE_LIMIT),
+			]);
+
+			// If any key is already blocked, reject immediately
+			if (![ipStatus, userStatus, comboStatus].every((s) => s.allowed)) {
+				return null;
+			}
+
+			// Phase 2: Increment only combo key
+			const comboCheck = await checkRateLimit(env.RATE_LIMIT_KV, keyCombo, TWO_FA_VERIFY_RATE_LIMIT);
+			if (!comboCheck.allowed) {
+				// Phase 3: Propagate block to related keys
+				await Promise.all([
+					blockIdentifier(env.RATE_LIMIT_KV, keyIp, TWO_FA_VERIFY_RATE_LIMIT),
+					blockIdentifier(env.RATE_LIMIT_KV, keyUser, TWO_FA_VERIFY_RATE_LIMIT),
+				]);
+				return null;
+			}
+
+			// Require at least one 2FA credential
+			if (!totpCode && !recoveryCode) {
+				// No 2FA credentials provided - authentication fails
+				// Rate limit attempt has been counted
+				return null;
+			}
+
+			let verified = false;
+			let usedRecoveryCode = false;
+
+			// Try TOTP code first
+			if (totpCode) {
+				verified = await verifyTOTP(twoFactorData.totpSecret, totpCode);
+			}
+
+			// Try recovery code if TOTP failed or not provided
+			if (!verified && recoveryCode) {
+				for (let i = 0; i < twoFactorData.recoveryCodes.length; i++) {
+					const isValid = await verifyRecoveryCode(recoveryCode, twoFactorData.recoveryCodes[i]);
+					if (isValid) {
+						verified = true;
+						usedRecoveryCode = true;
+						// Remove used recovery code
+						twoFactorData.recoveryCodes.splice(i, 1);
+						break;
+					}
+				}
+			}
+
+			if (!verified) {
+				// 2FA verification failed
+				return null;
+			}
+
+			// Update 2FA metadata
+			twoFactorData.lastUsedAt = Date.now();
+			await save2FAData(env, username, twoFactorData);
+
+			// Reset all 2FA rate limit keys and login rate limits on successful authentication
+			await Promise.all([
+				resetRateLimit(env.RATE_LIMIT_KV, keyIp),
+				resetRateLimit(env.RATE_LIMIT_KV, keyUser),
+				resetRateLimit(env.RATE_LIMIT_KV, keyCombo),
+			]);
+			await resetLoginRateLimits(env, username, request);
+
+			return {
+				userId: username,
+				authenticated: true,
+			};
+		}
+
+		// 2FA not enabled - password verification is sufficient
+		// Reset login rate limits on successful authentication
 		await resetLoginRateLimits(env, username, request);
 
 		return {
@@ -543,6 +661,26 @@ export async function handle2FAVerifySetup(request: Request, env: Env, authConte
 	try {
 		const username = authContext.userId;
 
+		// Rate limiting for 2FA setup verification (user + IP combination)
+		// Protects against brute-force attacks on TOTP codes during setup
+		const clientId = getClientIdentifier(request);
+		const rateLimitKey = `2fa-setup-verify:${username}:${clientId}`;
+		const verifyRate = await checkRateLimit(env.RATE_LIMIT_KV, rateLimitKey, TWO_FA_VERIFY_RATE_LIMIT);
+		if (!verifyRate.allowed) {
+			const retryAfter =
+				verifyRate.blockedUntil != null
+					? Math.max(1, Math.ceil((verifyRate.blockedUntil - Date.now()) / 1000))
+					: Math.max(1, Math.ceil(TWO_FA_VERIFY_RATE_LIMIT.blockDurationMs / 1000));
+
+			return new Response(JSON.stringify({ error: 'Too many verification attempts' }), {
+				status: 429,
+				headers: {
+					'Content-Type': 'application/json',
+					'Retry-After': retryAfter.toString(),
+				},
+			});
+		}
+
 		const body = await safeJson<{ code: string }>(request);
 		const { code } = body;
 
@@ -582,6 +720,9 @@ export async function handle2FAVerifySetup(request: Request, env: Env, authConte
 		data.totpEnabled = true;
 		data.enabledAt = Date.now();
 		await save2FAData(env, username, data);
+
+		// Reset rate limit on successful verification
+		await resetRateLimit(env.RATE_LIMIT_KV, rateLimitKey);
 
 		return new Response(
 			JSON.stringify({
@@ -660,6 +801,149 @@ export async function handle2FADisable(request: Request, env: Env, authContext: 
 		});
 	}
 }
+
+/**
+ * Regenerate recovery codes
+ *
+ * POST /auth/2fa/recovery-codes/regenerate
+ * Body: { password: string }
+ * Requires authentication
+ *
+ * Generates new recovery codes and invalidates all existing ones.
+ * Requires password confirmation for security.
+ */
+export async function handle2FARegenerateRecoveryCodes(
+	request: Request,
+	env: Env,
+	authContext: AuthContext
+): Promise<Response> {
+	try {
+		const username = authContext.userId;
+
+		// Multi-tier rate limiting before password verification (IP / User / Combo)
+		// Prevents unlimited PBKDF2 hash attacks from distributed sources
+		const clientId = getClientIdentifier(request);
+		const keyIp = `2fa-recovery-regenerate:ip:${clientId}`;
+		const keyUser = `2fa-recovery-regenerate:user:${username}`;
+		const keyCombo = `2fa-recovery-regenerate:user-ip:${username}:${clientId}`;
+
+		// Phase 1: Read-only check all keys
+		const [ipStatus, userStatus, comboStatus] = await Promise.all([
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyIp, LOGIN_RATE_LIMIT),
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyUser, LOGIN_RATE_LIMIT),
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyCombo, LOGIN_RATE_LIMIT),
+		]);
+
+		// If any key is already blocked, reject immediately
+		if (![ipStatus, userStatus, comboStatus].every((s) => s.allowed)) {
+			const blockedUntil = Math.max(
+				...([ipStatus, userStatus, comboStatus]
+					.filter((s) => !s.allowed)
+					.map((s) => s.blockedUntil ?? s.resetAt ?? 0)
+					.filter((v) => v > 0))
+			);
+			const retryAfter = blockedUntil > 0 ? Math.max(1, Math.ceil((blockedUntil - Date.now()) / 1000)) : 3600;
+
+			return new Response(JSON.stringify({ error: 'Too many attempts' }), {
+				status: 429,
+				headers: {
+					'Content-Type': 'application/json',
+					'Retry-After': retryAfter.toString(),
+				},
+			});
+		}
+
+		// Phase 2: Increment only combo key
+		const comboCheck = await checkRateLimit(env.RATE_LIMIT_KV, keyCombo, LOGIN_RATE_LIMIT);
+		if (!comboCheck.allowed) {
+			// Phase 3: Propagate block to related keys
+			await Promise.all([
+				blockIdentifier(env.RATE_LIMIT_KV, keyIp, LOGIN_RATE_LIMIT),
+				blockIdentifier(env.RATE_LIMIT_KV, keyUser, LOGIN_RATE_LIMIT),
+			]);
+
+			const retryAfter =
+				comboCheck.blockedUntil != null
+					? Math.max(1, Math.ceil((comboCheck.blockedUntil - Date.now()) / 1000))
+					: Math.max(1, Math.ceil(LOGIN_RATE_LIMIT.blockDurationMs / 1000));
+
+			return new Response(JSON.stringify({ error: 'Too many attempts' }), {
+				status: 429,
+				headers: {
+					'Content-Type': 'application/json',
+					'Retry-After': retryAfter.toString(),
+				},
+			});
+		}
+
+		const body = await safeJson<{ password: string }>(request);
+		const { password } = body;
+
+		if (!password) {
+			return new Response(JSON.stringify({ error: 'Password is required to regenerate recovery codes' }), {
+				status: 400,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+
+		// Verify password
+		const isValid = await verifyPasswordWithFallback(password, env);
+		if (!isValid) {
+			return new Response(JSON.stringify({ error: 'Invalid password' }), {
+				status: 401,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+
+		// Check if 2FA is enabled
+		const data = await get2FAData(env, username);
+		if (!data || !data.totpEnabled) {
+			return new Response(JSON.stringify({ error: '2FA is not enabled' }), {
+				status: 400,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+
+		// Generate new recovery codes
+		const recoveryCodes = generateRecoveryCodes(10);
+
+		// Hash recovery codes for storage
+		const hashedCodes = await Promise.all(recoveryCodes.map((code) => hashRecoveryCode(code)));
+
+		// Update 2FA data with new recovery codes (invalidates old ones)
+		data.recoveryCodes = hashedCodes;
+		await save2FAData(env, username, data);
+
+		// Reset all rate limit keys on successful regeneration
+		await Promise.all([
+			resetRateLimit(env.RATE_LIMIT_KV, keyIp),
+			resetRateLimit(env.RATE_LIMIT_KV, keyUser),
+			resetRateLimit(env.RATE_LIMIT_KV, keyCombo),
+		]);
+
+		return new Response(
+			JSON.stringify({
+				success: true,
+				recoveryCodes,
+				message: 'Recovery codes have been regenerated. Please store them securely. Old codes are now invalid.',
+			}),
+			{
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	} catch (error) {
+		if (error instanceof Response) {
+			return error;
+		}
+		console.error('2FA regenerate recovery codes error:', error);
+		return new Response(JSON.stringify({ error: 'Internal server error' }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
 
 /**
  * Get 2FA status
@@ -817,4 +1101,685 @@ export async function handle2FAVerify(request: Request, env: Env): Promise<Respo
 			headers: { 'Content-Type': 'application/json' },
 		});
 	}
+}
+
+// ==================== WebAuthn Passkey Functions ====================
+
+/**
+ * Get AUTH_KV namespace (falls back to TOTP_KV if not configured)
+ */
+function getAuthKV(env: Env): KVNamespace {
+	return env.AUTH_KV ?? env.TOTP_KV;
+}
+
+/**
+ * Start passkey registration
+ *
+ * POST /auth/passkey/register/start
+ * Requires authentication
+ *
+ * @returns PublicKeyCredentialCreationOptions and challenge ID
+ */
+export async function handlePasskeyRegisterStart(
+	request: Request,
+	env: Env,
+	authContext: AuthContext
+): Promise<Response> {
+	try {
+		const username = authContext.userId;
+		const kv = getAuthKV(env);
+
+		// Generate challenge
+		const challenge = generateChallenge();
+		const challengeId = crypto.randomUUID();
+
+		// Extract RP ID from WORKER_URL
+		const rpId = new URL(env.WORKER_URL).hostname;
+
+		// Generate registration options
+		const options = generateRegistrationOptions(username, username, rpId);
+
+		// Save challenge to KV (5 minute TTL)
+		await saveChallenge(kv, challengeId, challenge, username, 300);
+
+		// Replace challenge in options with the saved one (for serialization)
+		const serializableOptions = {
+			...options,
+			challenge: base64urlEncode(challenge),
+			user: {
+				...options.user,
+				id: base64urlEncode(new Uint8Array(options.user.id as ArrayBuffer)),
+			},
+		};
+
+		return new Response(
+			JSON.stringify({
+				options: serializableOptions,
+				challengeId,
+			}),
+			{
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	} catch (error) {
+		console.error('Passkey register start error:', error);
+		return new Response(
+			JSON.stringify({ error: 'Internal server error' }),
+			{
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	}
+}
+
+/**
+ * Finish passkey registration
+ *
+ * POST /auth/passkey/register/finish
+ * Body: { credential, challengeId, name? }
+ * Requires authentication
+ */
+export async function handlePasskeyRegisterFinish(
+	request: Request,
+	env: Env,
+	authContext: AuthContext
+): Promise<Response> {
+	try {
+		const username = authContext.userId;
+		const kv = getAuthKV(env);
+
+		const body = await safeJson<PasskeyRegisterFinishRequest>(request);
+		const { credential, challengeId, name } = body;
+
+		if (!credential || !challengeId) {
+			return new Response(
+				JSON.stringify({ error: 'Missing credential or challengeId' }),
+				{
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		// Retrieve challenge
+		const challengeRecord = await getChallenge(kv, challengeId);
+		if (!challengeRecord) {
+			return new Response(
+				JSON.stringify({ error: 'Challenge not found or expired' }),
+				{
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		// Verify user matches
+		if (challengeRecord.userId !== username) {
+			return new Response(
+				JSON.stringify({ error: 'Challenge user mismatch' }),
+				{
+					status: 403,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		// Verify registration response
+		const rpId = new URL(env.WORKER_URL).hostname;
+		const expectedChallenge = base64urlDecode(challengeRecord.challenge);
+
+		// Normalize credential from client JSON format
+		const normalizedCredential = normalizeWebAuthnCredential(credential);
+
+		const verificationResult = await verifyRegistrationResponse(
+			normalizedCredential,
+			expectedChallenge,
+			rpId,
+			env.WORKER_URL
+		);
+
+		// Delete challenge to prevent reuse
+		await deleteChallenge(kv, challengeId);
+
+		// Store passkey credential
+		const passkeyData: PasskeyCredential = {
+			credentialId: verificationResult.credentialId,
+			publicKey: verificationResult.publicKey,
+			counter: verificationResult.counter,
+			name: name || `Passkey ${new Date().toLocaleDateString()}`,
+			createdAt: Date.now(),
+		};
+
+		const key = `passkey:${username}:${verificationResult.credentialId}`;
+		await kv.put(key, JSON.stringify(passkeyData));
+
+		return new Response(
+			JSON.stringify({
+				success: true,
+				credentialId: verificationResult.credentialId,
+				message: 'Passkey registered successfully',
+			}),
+			{
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	} catch (error) {
+		if (error instanceof Response) {
+			return error;
+		}
+		console.error('Passkey register finish error:', error);
+		return new Response(
+			JSON.stringify({
+				error: 'Registration verification failed',
+				details: error instanceof Error ? error.message : 'Unknown error',
+			}),
+			{
+				status: 400,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	}
+}
+
+/**
+ * Start passkey authentication
+ *
+ * POST /auth/passkey/authenticate/start
+ * Body: { username }
+ * No authentication required
+ */
+export async function handlePasskeyAuthStart(
+	request: Request,
+	env: Env
+): Promise<Response> {
+	try {
+		const body = await safeJson<PasskeyAuthStartRequest>(request);
+		const { username } = body;
+
+		if (!username) {
+			return new Response(
+				JSON.stringify({ error: 'Username is required' }),
+				{
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		// Multi-tier rate limiting (IP / User / Combo) to prevent abuse
+		const clientId = getClientIdentifier(request);
+		const keyIp = `passkey-auth:ip:${clientId}`;
+		const keyUser = `passkey-auth:user:${username}`;
+		const keyCombo = `passkey-auth:user-ip:${username}:${clientId}`;
+
+		// Phase 1: Read-only check all keys
+		const [ipStatus, userStatus, comboStatus] = await Promise.all([
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyIp, PASSKEY_AUTH_RATE_LIMIT),
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyUser, PASSKEY_AUTH_RATE_LIMIT),
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyCombo, PASSKEY_AUTH_RATE_LIMIT),
+		]);
+
+		// If any key is already blocked, reject immediately
+		if (![ipStatus, userStatus, comboStatus].every((s) => s.allowed)) {
+			const blockedUntil = Math.max(
+				...([ipStatus, userStatus, comboStatus]
+					.filter((s) => !s.allowed)
+					.map((s) => s.blockedUntil ?? s.resetAt ?? 0)
+					.filter((v) => v > 0))
+			);
+			const retryAfter = blockedUntil > 0 ? Math.max(1, Math.ceil((blockedUntil - Date.now()) / 1000)) : 3600;
+
+			return new Response(
+				JSON.stringify({ error: 'Too many authentication attempts' }),
+				{
+					status: 429,
+					headers: {
+						'Content-Type': 'application/json',
+						'Retry-After': retryAfter.toString(),
+					},
+				}
+			);
+		}
+
+		// Phase 2: Increment only combo key
+		const comboCheck = await checkRateLimit(env.RATE_LIMIT_KV, keyCombo, PASSKEY_AUTH_RATE_LIMIT);
+		if (!comboCheck.allowed) {
+			// Phase 3: Propagate block to related keys
+			await Promise.all([
+				blockIdentifier(env.RATE_LIMIT_KV, keyIp, PASSKEY_AUTH_RATE_LIMIT),
+				blockIdentifier(env.RATE_LIMIT_KV, keyUser, PASSKEY_AUTH_RATE_LIMIT),
+			]);
+
+			const retryAfter =
+				comboCheck.blockedUntil != null
+					? Math.max(1, Math.ceil((comboCheck.blockedUntil - Date.now()) / 1000))
+					: Math.max(1, Math.ceil(PASSKEY_AUTH_RATE_LIMIT.blockDurationMs / 1000));
+
+			return new Response(
+				JSON.stringify({ error: 'Too many authentication attempts' }),
+				{
+					status: 429,
+					headers: {
+						'Content-Type': 'application/json',
+						'Retry-After': retryAfter.toString(),
+					},
+				}
+			);
+		}
+
+		const kv = getAuthKV(env);
+
+		// Get user's passkeys
+		const passkeys = await listUserPasskeys(kv, username);
+
+		// SECURITY: To prevent account enumeration, always return 200 with options
+		// If user has no passkeys, return empty allowCredentials
+		// This makes it indistinguishable whether the user exists or has passkeys
+		const challenge = generateChallenge();
+		const challengeId = crypto.randomUUID();
+
+		// Extract RP ID from WORKER_URL
+		const rpId = new URL(env.WORKER_URL).hostname;
+
+		// Generate authentication options (empty allowCredentials if no passkeys)
+		const options = generateAuthenticationOptions(username, passkeys, rpId);
+
+		// Save challenge
+		await saveChallenge(kv, challengeId, challenge, username, 300);
+
+		// Serialize options
+		const serializableOptions = {
+			...options,
+			challenge: base64urlEncode(challenge),
+			allowCredentials: options.allowCredentials?.map(cred => ({
+				...cred,
+				id: base64urlEncode(new Uint8Array(cred.id as ArrayBuffer)),
+			})),
+		};
+
+		return new Response(
+			JSON.stringify({
+				options: serializableOptions,
+				challengeId,
+			}),
+			{
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	} catch (error) {
+		if (error instanceof Response) {
+			return error;
+		}
+		console.error('Passkey auth start error:', error);
+		return new Response(
+			JSON.stringify({ error: 'Internal server error' }),
+			{
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	}
+}
+
+/**
+ * Finish passkey authentication
+ *
+ * POST /auth/passkey/authenticate/finish
+ * Body: { credential, challengeId }
+ * No authentication required
+ *
+ * @returns JWT access and refresh tokens
+ */
+export async function handlePasskeyAuthFinish(
+	request: Request,
+	env: Env
+): Promise<Response> {
+	try {
+		const body = await safeJson<PasskeyAuthFinishRequest>(request);
+		const { credential, challengeId } = body;
+
+		if (!credential || !challengeId) {
+			return new Response(
+				JSON.stringify({ error: 'Missing credential or challengeId' }),
+				{
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		const kv = getAuthKV(env);
+
+		// Retrieve challenge
+		const challengeRecord = await getChallenge(kv, challengeId);
+		if (!challengeRecord) {
+			return new Response(
+				JSON.stringify({ error: 'Challenge not found or expired' }),
+				{
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		const username = challengeRecord.userId;
+
+		// Multi-tier rate limiting (IP / User / Combo) to prevent brute force
+		const clientId = getClientIdentifier(request);
+		const keyIp = `passkey-auth-finish:ip:${clientId}`;
+		const keyUser = `passkey-auth-finish:user:${username}`;
+		const keyCombo = `passkey-auth-finish:user-ip:${username}:${clientId}`;
+
+		// Phase 1: Read-only check all keys
+		const [ipStatus, userStatus, comboStatus] = await Promise.all([
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyIp, PASSKEY_AUTH_RATE_LIMIT),
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyUser, PASSKEY_AUTH_RATE_LIMIT),
+			getRateLimitStatus(env.RATE_LIMIT_KV, keyCombo, PASSKEY_AUTH_RATE_LIMIT),
+		]);
+
+		// If any key is already blocked, reject immediately
+		if (![ipStatus, userStatus, comboStatus].every((s) => s.allowed)) {
+			const blockedUntil = Math.max(
+				...([ipStatus, userStatus, comboStatus]
+					.filter((s) => !s.allowed)
+					.map((s) => s.blockedUntil ?? s.resetAt ?? 0)
+					.filter((v) => v > 0))
+			);
+			const retryAfter = blockedUntil > 0 ? Math.max(1, Math.ceil((blockedUntil - Date.now()) / 1000)) : 3600;
+
+			return new Response(
+				JSON.stringify({ error: 'Too many authentication attempts' }),
+				{
+					status: 429,
+					headers: {
+						'Content-Type': 'application/json',
+						'Retry-After': retryAfter.toString(),
+					},
+				}
+			);
+		}
+
+		// Phase 2: Increment only combo key
+		const comboCheck = await checkRateLimit(env.RATE_LIMIT_KV, keyCombo, PASSKEY_AUTH_RATE_LIMIT);
+		if (!comboCheck.allowed) {
+			// Phase 3: Propagate block to related keys
+			await Promise.all([
+				blockIdentifier(env.RATE_LIMIT_KV, keyIp, PASSKEY_AUTH_RATE_LIMIT),
+				blockIdentifier(env.RATE_LIMIT_KV, keyUser, PASSKEY_AUTH_RATE_LIMIT),
+			]);
+
+			const retryAfter =
+				comboCheck.blockedUntil != null
+					? Math.max(1, Math.ceil((comboCheck.blockedUntil - Date.now()) / 1000))
+					: Math.max(1, Math.ceil(PASSKEY_AUTH_RATE_LIMIT.blockDurationMs / 1000));
+
+			return new Response(
+				JSON.stringify({ error: 'Too many authentication attempts' }),
+				{
+					status: 429,
+					headers: {
+						'Content-Type': 'application/json',
+						'Retry-After': retryAfter.toString(),
+					},
+				}
+			);
+		}
+
+		// Normalize credential from client JSON format
+		const normalizedCredential = normalizeWebAuthnCredential(credential);
+
+		// Get credential from storage
+		// Extract credential ID from response
+		const credentialIdB64 = typeof normalizedCredential?.rawId === 'string'
+			? normalizedCredential.rawId
+			: base64urlEncode(new Uint8Array(normalizedCredential.rawId));
+
+		const storedKey = `passkey:${username}:${credentialIdB64}`;
+		const storedDataRaw = await kv.get(storedKey);
+
+		if (!storedDataRaw) {
+			return new Response(
+				JSON.stringify({ error: 'Authentication failed' }),
+				{
+					status: 401,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		const storedCredential = JSON.parse(storedDataRaw) as PasskeyCredential;
+
+		// Verify authentication response
+		const rpId = new URL(env.WORKER_URL).hostname;
+		const expectedChallenge = base64urlDecode(challengeRecord.challenge);
+		const verificationResult = await verifyAuthenticationResponse(
+			normalizedCredential,
+			expectedChallenge,
+			storedCredential,
+			rpId,
+			env.WORKER_URL
+		);
+
+		// Delete challenge
+		await deleteChallenge(kv, challengeId);
+
+		// Update counter
+		storedCredential.counter = verificationResult.newCounter;
+		await kv.put(storedKey, JSON.stringify(storedCredential));
+
+		// Reset rate limits on successful authentication
+		await Promise.all([
+			resetRateLimit(env.RATE_LIMIT_KV, keyIp),
+			resetRateLimit(env.RATE_LIMIT_KV, keyUser),
+			resetRateLimit(env.RATE_LIMIT_KV, keyCombo),
+		]);
+
+		// Generate JWT tokens
+		const accessToken = await generateAccessToken(username, env.JWT_SECRET);
+		const refreshToken = await generateRefreshToken(username, env.JWT_SECRET);
+
+		return new Response(
+			JSON.stringify({
+				success: true,
+				accessToken,
+				refreshToken,
+				user: { username },
+				expiresIn: 900, // 15 minutes
+			}),
+			{
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	} catch (error) {
+		if (error instanceof Response) {
+			return error;
+		}
+		console.error('Passkey auth finish error:', error);
+		return new Response(
+			JSON.stringify({
+				error: 'Authentication verification failed',
+				details: error instanceof Error ? error.message : 'Unknown error',
+			}),
+			{
+				status: 401,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	}
+}
+
+/**
+ * List user's passkeys
+ *
+ * GET /auth/passkeys
+ * Requires authentication
+ */
+export async function handlePasskeyList(
+	request: Request,
+	env: Env,
+	authContext: AuthContext
+): Promise<Response> {
+	try {
+		const username = authContext.userId;
+		const kv = getAuthKV(env);
+
+		const passkeys = await listUserPasskeys(kv, username);
+
+		const passkeyList: PasskeyListItem[] = passkeys.map(p => ({
+			id: p.credentialId,
+			name: p.name,
+			createdAt: p.createdAt,
+		}));
+
+		return new Response(
+			JSON.stringify({
+				passkeys: passkeyList,
+				count: passkeyList.length,
+			}),
+			{
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	} catch (error) {
+		console.error('Passkey list error:', error);
+		return new Response(
+			JSON.stringify({ error: 'Internal server error' }),
+			{
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	}
+}
+
+/**
+ * Delete a passkey
+ *
+ * DELETE /auth/passkey/:credentialId
+ * Requires authentication
+ */
+export async function handlePasskeyDelete(
+	request: Request,
+	env: Env,
+	authContext: AuthContext,
+	credentialId: string
+): Promise<Response> {
+	try {
+		const username = authContext.userId;
+		const kv = getAuthKV(env);
+
+		const key = `passkey:${username}:${credentialId}`;
+		const existing = await kv.get(key);
+
+		if (!existing) {
+			return new Response(
+				JSON.stringify({ error: 'Passkey not found' }),
+				{
+					status: 404,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		await kv.delete(key);
+
+		return new Response(
+			JSON.stringify({
+				success: true,
+				deletedId: credentialId,
+				message: 'Passkey deleted successfully',
+			}),
+			{
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	} catch (error) {
+		console.error('Passkey delete error:', error);
+		return new Response(
+			JSON.stringify({ error: 'Internal server error' }),
+			{
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			}
+		);
+	}
+}
+
+/**
+ * List all passkeys for a user
+ *
+ * @param kv - KV namespace
+ * @param username - User ID
+ * @returns Array of passkey credentials
+ */
+async function listUserPasskeys(kv: KVNamespace, username: string): Promise<PasskeyCredential[]> {
+	// KV doesn't support prefix listing, so we need to use list() with prefix
+	const prefix = `passkey:${username}:`;
+	const list = await kv.list({ prefix });
+
+	const passkeys: PasskeyCredential[] = [];
+	for (const key of list.keys) {
+		const data = await kv.get(key.name);
+		if (data) {
+			try {
+				passkeys.push(JSON.parse(data) as PasskeyCredential);
+			} catch {
+				// Skip invalid data
+			}
+		}
+	}
+
+	return passkeys;
+}
+
+/**
+ * Normalize WebAuthn credential from client JSON format to binary format
+ *
+ * Converts base64url-encoded strings back to ArrayBuffer/Uint8Array
+ * for verification functions that expect binary data
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeWebAuthnCredential(credential: any): any {
+	if (!credential || typeof credential !== 'object') {
+		return credential;
+	}
+
+	const normalized = { ...credential, response: { ...credential.response } };
+
+	const decodeField = (value: unknown): Uint8Array | ArrayBuffer | undefined => {
+		if (!value) {
+			return undefined;
+		}
+		if (typeof value === 'string') {
+			return base64urlDecode(value);
+		}
+		if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+			return value;
+		}
+		return undefined;
+	};
+
+	// Decode rawId
+	const rawIdDecoded = decodeField(normalized.rawId);
+	if (rawIdDecoded) {
+		normalized.rawId = rawIdDecoded;
+	}
+
+	// Decode response fields
+	const fields = ['clientDataJSON', 'attestationObject', 'authenticatorData', 'signature'] as const;
+	for (const field of fields) {
+		const decoded = decodeField(normalized.response?.[field]);
+		if (decoded) {
+			normalized.response[field] = decoded;
+		}
+	}
+
+	return normalized;
 }
