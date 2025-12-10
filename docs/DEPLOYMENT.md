@@ -6,21 +6,38 @@ This guide explains how to deploy CFr2-webdav with all security features (Stages
 
 1. Cloudflare account with R2 enabled
 2. GitHub repository forked or cloned
-3. `wrangler` CLI installed locally (for creating KV namespaces)
+3. Project dependencies installed (run `npm install` or `pnpm install`)
 
 ## Step 1: Create KV Namespaces
+
+### 1.1 Login to Cloudflare
+
+First, login to your Cloudflare account using wrangler:
+
+```bash
+npx wrangler login
+```
+
+This will open a browser window for authorization. If you have multiple Cloudflare accounts, you can use `npx wrangler whoami` to check which account is currently logged in.
+
+### 1.2 Create KV Namespaces
 
 You need to create three KV namespaces in your Cloudflare account:
 
 ```bash
-# Create KV namespaces
-wrangler kv:namespace create "RATE_LIMIT_KV"
-wrangler kv:namespace create "QUOTA_KV"
-wrangler kv:namespace create "TOTP_KV"
+# If you have only one account, run directly:
+npx wrangler kv namespace create "RATE_LIMIT_KV"
+npx wrangler kv namespace create "QUOTA_KV"
+npx wrangler kv namespace create "TOTP_KV"
+
+# If you have multiple accounts, specify the account ID:
+npx wrangler kv namespace create "RATE_LIMIT_KV" --account-id YOUR_ACCOUNT_ID
+npx wrangler kv namespace create "QUOTA_KV" --account-id YOUR_ACCOUNT_ID
+npx wrangler kv namespace create "TOTP_KV" --account-id YOUR_ACCOUNT_ID
 
 # Optional: Create dedicated namespace for WebAuthn passkeys (Stage 3)
 # If not created, passkeys will use TOTP_KV
-wrangler kv:namespace create "AUTH_KV"
+npx wrangler kv namespace create "AUTH_KV"
 ```
 
 **Save the namespace IDs** from the output. You'll need them in Step 3.
@@ -39,9 +56,8 @@ Example output:
 Generate a secure PBKDF2 password hash:
 
 ```bash
-# Option 1: Using the included script
-npm run dev  # In one terminal
-node scripts/generate-password-hash.js your-password-here  # In another terminal
+# Option 1: Using the included script (Recommended)
+node scripts/generate-password-hash.js your-password-here
 
 # Option 2: Using browser console
 # Open browser console and run:
@@ -151,7 +167,7 @@ Once all secrets are configured, deployment is automatic:
 **Cause**: Invalid KV namespace ID in secrets
 
 **Solution**:
-1. Verify KV namespaces exist: `wrangler kv:namespace list`
+1. Verify KV namespaces exist: `npx wrangler kv namespace list`
 2. Update the corresponding secret with correct namespace ID
 
 ### "Cloudflare API token is invalid"

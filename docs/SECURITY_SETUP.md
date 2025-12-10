@@ -5,7 +5,7 @@ This guide will help you set up the Stage 1 security features for CFr2-webdav.
 ## Prerequisites
 
 1. Cloudflare account with R2 enabled
-2. `wrangler` CLI installed and configured
+2. Project dependencies installed (run `npm install` or `pnpm install`)
 3. Node.js and npm installed
 
 ## Step 1: Create KV Namespaces
@@ -14,10 +14,10 @@ Create two KV namespaces for rate limiting and storage quota tracking:
 
 ```bash
 # Create rate limiting KV namespace
-wrangler kv:namespace create "RATE_LIMIT_KV"
+npx wrangler kv namespace create "RATE_LIMIT_KV"
 
 # Create storage quota KV namespace
-wrangler kv:namespace create "QUOTA_KV"
+npx wrangler kv namespace create "QUOTA_KV"
 ```
 
 Save the namespace IDs from the output. You'll need them for Step 3.
@@ -26,14 +26,9 @@ Save the namespace IDs from the output. You'll need them for Step 3.
 
 You have two options to generate a secure password hash:
 
-### Option A: Using wrangler dev (Recommended)
+### Option A: Using the included script (Recommended)
 
-1. Start development server:
-```bash
-npm run dev
-```
-
-2. In another terminal, run the hash generation script:
+Run the hash generation script directly:
 ```bash
 node scripts/generate-password-hash.js your-password-here
 ```
@@ -227,7 +222,7 @@ Stage 2 has been implemented! TOTP 2FA adds an additional layer of security by r
 
 1. **Create TOTP KV Namespace**:
 ```bash
-wrangler kv:namespace create "TOTP_KV"
+npx wrangler kv namespace create "TOTP_KV"
 ```
 
 2. **Update wrangler.toml**:
@@ -346,7 +341,7 @@ The WebAuthn implementation is already included in the codebase. No additional s
 **Optional**: Create a dedicated KV namespace for passkeys:
 ```bash
 # Create AUTH_KV namespace
-wrangler kv:namespace create "AUTH_KV"
+npx wrangler kv namespace create "AUTH_KV"
 
 # Add to wrangler.toml
 [[kv_namespaces]]

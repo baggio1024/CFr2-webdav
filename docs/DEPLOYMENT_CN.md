@@ -6,26 +6,44 @@
 
 1. 启用了 R2 的 Cloudflare 账户
 2. GitHub 仓库（fork 或 clone）
-3. 本地安装 `wrangler` CLI（用于创建 KV 命名空间）
+3. 已安装项目依赖（运行 `npm install` 或 `pnpm install`）
 
 ## 步骤 1：创建 KV 命名空间
+
+### 1.1 登录 Cloudflare
+
+首先，使用 wrangler 登录到你的 Cloudflare 账户：
+
+```bash
+npx wrangler login
+```
+
+这将打开浏览器窗口进行授权。如果你有多个 Cloudflare 账户，可以使用 `npx wrangler whoami` 查看当前登录的账户。
+
+### 1.2 创建 KV 命名空间
 
 你需要在 Cloudflare 账户中创建三个 KV 命名空间：
 
 ```bash
-# 创建 KV 命名空间
-wrangler kv:namespace create "RATE_LIMIT_KV"
-wrangler kv:namespace create "QUOTA_KV"
-wrangler kv:namespace create "TOTP_KV"
+# 如果只有一个账户，直接运行：
+npx wrangler kv namespace create "RATE_LIMIT_KV"
+npx wrangler kv namespace create "QUOTA_KV"
+npx wrangler kv namespace create "TOTP_KV"
+
+# 如果有多个账户，需要指定账户 ID：
+npx wrangler kv namespace create "RATE_LIMIT_KV" --account-id YOUR_ACCOUNT_ID
+npx wrangler kv namespace create "QUOTA_KV" --account-id YOUR_ACCOUNT_ID
+npx wrangler kv namespace create "TOTP_KV" --account-id YOUR_ACCOUNT_ID
 
 # 可选：为 WebAuthn passkeys 创建专用命名空间（阶段 3）
 # 如果不创建，passkeys 将使用 TOTP_KV
-wrangler kv:namespace create "AUTH_KV"
+npx wrangler kv namespace create "AUTH_KV"
 ```
 
 **保存输出中的命名空间 ID**，步骤 3 中需要用到。
 
 输出示例：
+
 ```
 { binding = "RATE_LIMIT_KV", id = "abc123..." }
 { binding = "QUOTA_KV", id = "def456..." }
@@ -39,9 +57,8 @@ wrangler kv:namespace create "AUTH_KV"
 生成安全的 PBKDF2 密码哈希：
 
 ```bash
-# 方法 1：使用项目脚本
-npm run dev  # 在一个终端中运行
-node scripts/generate-password-hash.js your-password-here  # 在另一个终端中运行
+# 方法 1：使用项目脚本（推荐）
+node scripts/generate-password-hash.js your-password-here
 
 # 方法 2：使用浏览器控制台
 # 打开浏览器控制台并运行：
@@ -82,24 +99,24 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 ### 必需的 Secrets
 
-| Secret 名称 | 说明 | 示例 / 如何获取 |
-|------------|------|----------------|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token | 在 https://dash.cloudflare.com/profile/api-tokens 创建 |
-| `CLOUDFLARE_ACCOUNT_ID` | 你的 Cloudflare 账户 ID | 在 Cloudflare 仪表板 URL 或 Workers 概览中找到 |
-| `USERNAME` | 管理员用户名 | `admin` |
-| `PASSWORD_HASH` | PBKDF2 密码哈希 | 来自步骤 2（例如：`v1:100000:abc...`）|
-| `JWT_SECRET` | JWT 签名密钥 | 来自步骤 2（32 字节 base64 字符串）|
-| `WORKER_URL` | 你的 Worker URL | `https://your-worker.workers.dev` |
-| `BUCKET_NAME` | R2 存储桶名称 | 你的 R2 bucket 名称 |
-| `RATE_LIMIT_KV_ID` | 限流 KV ID | 来自步骤 1 |
-| `QUOTA_KV_ID` | 存储配额 KV ID | 来自步骤 1 |
-| `TOTP_KV_ID` | TOTP 2FA KV ID | 来自步骤 1 |
+| Secret 名称             | 说明                    | 示例 / 如何获取                                        |
+| ----------------------- | ----------------------- | ------------------------------------------------------ |
+| `CLOUDFLARE_API_TOKEN`  | Cloudflare API token    | 在 https://dash.cloudflare.com/profile/api-tokens 创建 |
+| `CLOUDFLARE_ACCOUNT_ID` | 你的 Cloudflare 账户 ID | 在 Cloudflare 仪表板 URL 或 Workers 概览中找到         |
+| `USERNAME`              | 管理员用户名            | `admin`                                                |
+| `PASSWORD_HASH`         | PBKDF2 密码哈希         | 来自步骤 2（例如：`v1:100000:abc...`）                 |
+| `JWT_SECRET`            | JWT 签名密钥            | 来自步骤 2（32 字节 base64 字符串）                    |
+| `WORKER_URL`            | 你的 Worker URL         | `https://your-worker.workers.dev`                      |
+| `BUCKET_NAME`           | R2 存储桶名称           | 你的 R2 bucket 名称                                    |
+| `RATE_LIMIT_KV_ID`      | 限流 KV ID              | 来自步骤 1                                             |
+| `QUOTA_KV_ID`           | 存储配额 KV ID          | 来自步骤 1                                             |
+| `TOTP_KV_ID`            | TOTP 2FA KV ID          | 来自步骤 1                                             |
 
 ### 可选的 Secrets
 
-| Secret 名称 | 说明 | 未设置时的默认值 |
-|------------|------|-----------------|
-| `PASSWORD` | 旧版明文密码 | `_pass`（不推荐）|
+| Secret 名称  | 说明                    | 未设置时的默认值  |
+| ------------ | ----------------------- | ----------------- |
+| `PASSWORD`   | 旧版明文密码            | `_pass`（不推荐） |
 | `AUTH_KV_ID` | WebAuthn passkeys KV ID | 使用 `TOTP_KV_ID` |
 
 ## 步骤 4：创建 Cloudflare API Token
@@ -123,6 +140,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 配置好所有 secrets 后，部署将自动进行：
 
 1. 推送到 `main` 分支：
+
    ```bash
    git push origin main
    ```
@@ -151,7 +169,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 **原因**：secrets 中的 KV 命名空间 ID 无效
 
 **解决方案**：
-1. 验证 KV 命名空间存在：`wrangler kv:namespace list`
+
+1. 验证 KV 命名空间存在：`npx wrangler kv namespace list`
 2. 使用正确的命名空间 ID 更新相应的 secret
 
 ### "Cloudflare API token is invalid"
@@ -159,6 +178,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 **原因**：API token 过期或权限不足
 
 **解决方案**：
+
 1. 使用正确权限创建新的 API token（参见步骤 4）
 2. 更新 `CLOUDFLARE_API_TOKEN` secret
 
@@ -173,11 +193,13 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 部署成功后，验证你的 Worker：
 
 1. **检查 Worker 状态**：
+
    ```bash
    curl https://your-worker.workers.dev/
    ```
 
 2. **测试认证**：
+
    ```bash
    # 测试密码登录
    curl -X POST https://your-worker.workers.dev/auth/login \
@@ -230,5 +252,4 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ## 支持
 
 - **安全设置指南**：查看 `docs/SECURITY_SETUP.md`
-- **阶段 3 实施指南**：查看 `docs/STAGE3_IMPLEMENTATION_GUIDE.md`
 - **问题报告**：在 GitHub 上开启 issue
