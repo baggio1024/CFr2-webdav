@@ -1,6 +1,6 @@
 name = "cf-r2-webdav"
 main = "src/index.ts"
-compatibility_date = "2023-01-01"
+compatibility_date = "2025-12-09"
 account_id = "$ACCOUNT_ID"
 
 [vars]
@@ -47,3 +47,10 @@ id = "$QUOTA_KV_ID"
 [[kv_namespaces]]
 binding = "TOTP_KV"
 id = "$TOTP_KV_ID"
+
+# Stage 3: WebAuthn Passkeys (Optional)
+# Uncomment to use a dedicated KV namespace for passkeys
+# If not configured, passkeys will use TOTP_KV
+# [[kv_namespaces]]
+# binding = "AUTH_KV"
+# id = "$AUTH_KV_ID"
