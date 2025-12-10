@@ -284,7 +284,7 @@ export async function verifyToken(token: string, secret: string): Promise<JWTPay
 		typeof payload.sub !== 'string' ||
 		typeof payload.iat !== 'number' ||
 		typeof payload.exp !== 'number' ||
-		(payload.type !== 'access' && payload.type !== 'refresh')
+		(payload.type !== 'access' && payload.type !== 'refresh' && payload.type !== 'partial')
 	) {
 		return null; // Invalid payload structure
 	}

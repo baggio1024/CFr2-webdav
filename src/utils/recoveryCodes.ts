@@ -8,14 +8,16 @@
 
 import { hashPassword, verifyPassword } from './crypto';
 
+const RECOVERY_CODE_HEX_LENGTH = 10; // 40 bits entropy (5 bytes)
+
 /**
  * Generate cryptographically secure recovery codes
  *
- * Creates one-time use backup codes for 2FA recovery. Each code is 8 hexadecimal
- * characters (32 bits of entropy). Users should store these securely offline.
+ * Creates one-time use backup codes for 2FA recovery. Each code is 10 hexadecimal
+ * characters (40 bits of entropy). Users should store these securely offline.
  *
  * @param count - Number of recovery codes to generate (default: 10)
- * @returns Array of recovery codes in format XXXX-XXXX
+ * @returns Array of recovery codes in format XXXXX-XXXXX
  *
  * @example
  * const codes = generateRecoveryCodes(10);
@@ -29,15 +31,15 @@ export function generateRecoveryCodes(count: number = 10): string[] {
 	const codes: string[] = [];
 
 	for (let i = 0; i < count; i++) {
-		// Generate 4 random bytes (8 hex characters)
-		const randomBytes = crypto.getRandomValues(new Uint8Array(4));
+		// Generate 5 random bytes (10 hex characters)
+		const randomBytes = crypto.getRandomValues(new Uint8Array(5));
 		const hexString = Array.from(randomBytes)
 			.map((b) => b.toString(16).padStart(2, '0'))
 			.join('')
 			.toUpperCase();
 
-		// Format as XXXX-XXXX for readability
-		const formatted = `${hexString.slice(0, 4)}-${hexString.slice(4)}`;
+		// Format as XXXXX-XXXXX for readability
+		const formatted = `${hexString.slice(0, 5)}-${hexString.slice(5)}`;
 		codes.push(formatted);
 	}
 
@@ -62,7 +64,7 @@ export async function hashRecoveryCode(code: string): Promise<string> {
 	const normalized = code.replace(/-/g, '').toUpperCase();
 
 	// Validate format
-	if (!/^[0-9A-F]{8}$/.test(normalized)) {
+	if (!new RegExp(`^[0-9A-F]{${RECOVERY_CODE_HEX_LENGTH}}$`).test(normalized)) {
 		throw new Error('Invalid recovery code format');
 	}
 
@@ -86,7 +88,7 @@ export async function verifyRecoveryCode(code: string, hash: string): Promise<bo
 		const normalized = code.replace(/-/g, '').toUpperCase();
 
 		// Validate format
-		if (!/^[0-9A-F]{8}$/.test(normalized)) {
+		if (!new RegExp(`^[0-9A-F]{${RECOVERY_CODE_HEX_LENGTH}}$`).test(normalized)) {
 			return false;
 		}
 
@@ -137,5 +139,5 @@ export function isValidRecoveryCodeFormat(code: string): boolean {
 
 	// Accept with or without hyphen
 	const normalized = code.replace(/-/g, '').toUpperCase();
-	return /^[0-9A-F]{8}$/.test(normalized);
+	return new RegExp(`^[0-9A-F]{${RECOVERY_CODE_HEX_LENGTH}}$`).test(normalized);
 }

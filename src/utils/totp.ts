@@ -15,8 +15,9 @@ const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
  * TOTP configuration constants
  */
 const TOTP_WINDOW_SECONDS = 30;
-const TOTP_DIGITS = 6;
+export const TOTP_DIGITS = 6;
 const TOTP_ALGORITHM = 'SHA-1';
+const TOTP_URI_ALGORITHM = 'SHA1'; // Key URI uses SHA1 without hyphen for compatibility
 
 /**
  * Generate a random TOTP secret
@@ -54,7 +55,7 @@ export async function verifyTOTP(secret: string, code: string): Promise<boolean>
 	}
 
 	// Validate code is numeric
-	if (!/^\d{6}$/.test(code)) {
+	if (!new RegExp(`^\\d{${TOTP_DIGITS}}$`).test(code)) {
 		return false;
 	}
 
@@ -135,7 +136,7 @@ export function generateTOTPUri(secret: string, accountName: string, issuer: str
 	const params = new URLSearchParams({
 		secret: secret,
 		issuer: issuer,
-		algorithm: TOTP_ALGORITHM,
+		algorithm: TOTP_URI_ALGORITHM,
 		digits: TOTP_DIGITS.toString(),
 		period: TOTP_WINDOW_SECONDS.toString(),
 	});

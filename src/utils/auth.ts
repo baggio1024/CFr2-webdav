@@ -10,8 +10,15 @@ import {
 	getClientIdentifier,
 	LOGIN_RATE_LIMIT,
 } from './rateLimit';
-import { generateTOTPSecret, verifyTOTP, generateTOTPUri } from './totp';
+import { generateTOTPSecret, verifyTOTP, generateTOTPUri, TOTP_DIGITS } from './totp';
 import { generateRecoveryCodes, hashRecoveryCode, verifyRecoveryCode } from './recoveryCodes';
+
+// 2FA 验证尝试限流（5 次 / 10 分钟，封禁 1 小时）
+const TWO_FA_VERIFY_RATE_LIMIT = {
+	maxAttempts: 5,
+	windowMs: 10 * 60 * 1000,
+	blockDurationMs: 60 * 60 * 1000,
+};
 
 /**
  * Authenticate a request using hybrid authentication
@@ -539,7 +546,7 @@ export async function handle2FAVerifySetup(request: Request, env: Env, authConte
 		const body = await safeJson<{ code: string }>(request);
 		const { code } = body;
 
-		if (!code || code.length !== 6) {
+		if (!code || code.length !== TOTP_DIGITS || !/^\d+$/.test(code)) {
 			return new Response(JSON.stringify({ error: 'Invalid code format' }), {
 				status: 400,
 				headers: { 'Content-Type': 'application/json' },
@@ -717,6 +724,25 @@ export async function handle2FAVerify(request: Request, env: Env): Promise<Respo
 
 		const username = payload.sub;
 
+		// 2FA 验证限流（按用户+IP 组合）
+		const clientId = getClientIdentifier(request);
+		const rateLimitKey = `2fa-verify:${username}:${clientId}`;
+		const verifyRate = await checkRateLimit(env.RATE_LIMIT_KV, rateLimitKey, TWO_FA_VERIFY_RATE_LIMIT);
+		if (!verifyRate.allowed) {
+			const retryAfter =
+				verifyRate.blockedUntil != null
+					? Math.max(1, Math.ceil((verifyRate.blockedUntil - Date.now()) / 1000))
+					: Math.max(1, Math.ceil(TWO_FA_VERIFY_RATE_LIMIT.blockDurationMs / 1000));
+
+			return new Response(JSON.stringify({ error: 'Too many 2FA attempts' }), {
+				status: 429,
+				headers: {
+					'Content-Type': 'application/json',
+					'Retry-After': retryAfter.toString(),
+				},
+			});
+		}
+
 		// Get 2FA data
 		const data = await get2FAData(env, username);
 		if (!data || !data.totpEnabled) {
@@ -759,6 +785,9 @@ export async function handle2FAVerify(request: Request, env: Env): Promise<Respo
 		// Update last used timestamp
 		data.lastUsedAt = Date.now();
 		await save2FAData(env, username, data);
+
+		// 成功后重置限流计数
+		await resetRateLimit(env.RATE_LIMIT_KV, rateLimitKey);
 
 		// Generate full access tokens
 		const accessToken = await generateAccessToken(username, env.JWT_SECRET);
