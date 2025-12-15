@@ -1249,7 +1249,7 @@ export async function handlePasskeyAuthStart(
 		const serializableOptions = {
 			...options,
 			challenge: base64urlEncode(challenge),
-			allowCredentials: options.allowCredentials?.map(cred => ({
+			allowCredentials: options.allowCredentials?.map((cred: { type: string; id: ArrayBuffer | Uint8Array }) => ({
 				...cred,
 				id: base64urlEncode(new Uint8Array(cred.id as ArrayBuffer)),
 			})),

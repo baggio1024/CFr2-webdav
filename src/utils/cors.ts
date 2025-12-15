@@ -47,7 +47,7 @@ export function setCORSHeaders(response: Response, request: Request, env: Env): 
 
 	// Only set Access-Control-Allow-Origin if origin is in whitelist
 	if (normalizedOrigin && normalizedAllowed.has(normalizedOrigin)) {
-		response.headers.set('Access-Control-Allow-Origin', origin);
+		response.headers.set('Access-Control-Allow-Origin', normalizedOrigin);
 		response.headers.set('Access-Control-Allow-Credentials', 'true');
 	}
 

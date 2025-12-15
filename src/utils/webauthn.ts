@@ -16,6 +16,11 @@
  */
 
 import type { ChallengeRecord, PasskeyCredential } from '../types';
+import type {
+	PublicKeyCredentialCreationOptions,
+	PublicKeyCredentialRequestOptions,
+	AlgorithmIdentifier,
+} from '../webauthn.d';
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
@@ -269,7 +274,7 @@ export async function verifyRegistrationResponse(
 	}
 
 	// Step 3: Parse authenticatorData
-	const authenticatorData = parseAuthenticatorData(authDataBytes.buffer);
+	const authenticatorData = parseAuthenticatorData(authDataBytes.buffer as ArrayBuffer);
 	await assertRpIdHash(authenticatorData.rpIdHash, rpId);
 
 	if (!authenticatorData.flags.userPresent) {
@@ -428,7 +433,7 @@ function challengeEquals(clientChallengeB64: string, expected: Uint8Array): bool
  */
 async function assertRpIdHash(rpIdHash: Uint8Array, rpId: string): Promise<void> {
 	const expected = new Uint8Array(await crypto.subtle.digest('SHA-256', TEXT_ENCODER.encode(rpId)));
-	if (bufferToHex(expected.buffer) !== bufferToHex(rpIdHash.buffer)) {
+	if (bufferToHex(expected.buffer as ArrayBuffer) !== bufferToHex(rpIdHash.buffer as ArrayBuffer)) {
 		throw new Error('rpIdHash mismatch: authenticator data is for different RP');
 	}
 }

@@ -1,5 +1,10 @@
 // 文件名：src/types.ts
 
+import type {
+	PublicKeyCredentialCreationOptions,
+	PublicKeyCredentialRequestOptions,
+} from './webauthn.d';
+
 /**
  * Cloudflare Workers environment bindings
  */
