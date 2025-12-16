@@ -160,8 +160,8 @@ export interface PasskeyRegisterFinishRequest {
  * Requires username to fetch allowed credentials
  */
 export interface PasskeyAuthStartRequest {
-	/** Username to authenticate */
-	username: string;
+	/** Username to authenticate (optional for discoverable credentials) */
+	username?: string;
 }
 
 /**

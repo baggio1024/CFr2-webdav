@@ -978,8 +978,9 @@ export async function handlePasskeyRegisterStart(
 		const challenge = generateChallenge();
 		const challengeId = crypto.randomUUID();
 
-		// Extract RP ID from WORKER_URL
-		const rpId = new URL(env.WORKER_URL).hostname;
+		// Extract RP ID from request origin (supports both dev and prod)
+		const origin = request.headers.get('Origin') || env.WORKER_URL;
+		const rpId = new URL(origin).hostname;
 
 		// Generate registration options
 		const options = generateRegistrationOptions(username, username, rpId);
@@ -1060,18 +1061,14 @@ export async function handlePasskeyRegisterFinish(
 		}
 
 		// Verify registration response
-		const rpId = new URL(env.WORKER_URL).hostname;
+		const origin = request.headers.get('Origin') || env.WORKER_URL;
+		const rpId = new URL(origin).hostname;
 		const expectedChallenge = base64urlDecode(challengeRecord.challenge);
 
 		// Normalize credential from client JSON format
 		const normalizedCredential = normalizeWebAuthnCredential(credential);
 
-		const verificationResult = await verifyRegistrationResponse(
-			normalizedCredential,
-			expectedChallenge,
-			rpId,
-			env.WORKER_URL,
-		);
+		const verificationResult = await verifyRegistrationResponse(normalizedCredential, expectedChallenge, rpId, origin);
 
 		// Delete challenge to prevent reuse
 		await deleteChallenge(kv, challengeId);
@@ -1129,24 +1126,21 @@ export async function handlePasskeyAuthStart(request: Request, env: Env): Promis
 		const body = await safeJson<PasskeyAuthStartRequest>(request);
 		const { username } = body;
 
-		if (!username) {
-			return new Response(JSON.stringify({ error: 'Username is required' }), {
-				status: 400,
-				headers: { 'Content-Type': 'application/json' },
-			});
-		}
-
 		// Multi-tier rate limiting (IP / User / Combo) to prevent abuse
 		const clientId = getClientIdentifier(request);
 		const keyIp = `passkey-auth:ip:${clientId}`;
-		const keyUser = `passkey-auth:user:${username}`;
-		const keyCombo = `passkey-auth:user-ip:${username}:${clientId}`;
+		const keyUser = username ? `passkey-auth:user:${username}` : '';
+		const keyCombo = username ? `passkey-auth:user-ip:${username}:${clientId}` : '';
 
 		// Phase 1: Read-only check all keys
-		const [ipStatus, userStatus, comboStatus] = await Promise.all([
-			getRateLimitStatus(env.RATE_LIMIT_KV, keyIp, PASSKEY_AUTH_RATE_LIMIT),
-			getRateLimitStatus(env.RATE_LIMIT_KV, keyUser, PASSKEY_AUTH_RATE_LIMIT),
-			getRateLimitStatus(env.RATE_LIMIT_KV, keyCombo, PASSKEY_AUTH_RATE_LIMIT),
+		const statusChecks = [getRateLimitStatus(env.RATE_LIMIT_KV, keyIp, PASSKEY_AUTH_RATE_LIMIT)];
+		if (keyUser) statusChecks.push(getRateLimitStatus(env.RATE_LIMIT_KV, keyUser, PASSKEY_AUTH_RATE_LIMIT));
+		if (keyCombo) statusChecks.push(getRateLimitStatus(env.RATE_LIMIT_KV, keyCombo, PASSKEY_AUTH_RATE_LIMIT));
+
+		const [ipStatus, userStatus, comboStatus] = await Promise.all(statusChecks).then(results => [
+			results[0],
+			results[1] || { allowed: true },
+			results[2] || { allowed: true }
 		]);
 
 		// If any key is already blocked, reject immediately
@@ -1168,33 +1162,34 @@ export async function handlePasskeyAuthStart(request: Request, env: Env): Promis
 			});
 		}
 
-		// Phase 2: Increment only combo key
-		const comboCheck = await checkRateLimit(env.RATE_LIMIT_KV, keyCombo, PASSKEY_AUTH_RATE_LIMIT);
-		if (!comboCheck.allowed) {
-			// Phase 3: Propagate block to related keys
-			await Promise.all([
-				blockIdentifier(env.RATE_LIMIT_KV, keyIp, PASSKEY_AUTH_RATE_LIMIT),
-				blockIdentifier(env.RATE_LIMIT_KV, keyUser, PASSKEY_AUTH_RATE_LIMIT),
-			]);
+		// Phase 2: Increment only combo key if username provided
+		if (keyCombo) {
+			const comboCheck = await checkRateLimit(env.RATE_LIMIT_KV, keyCombo, PASSKEY_AUTH_RATE_LIMIT);
+			if (!comboCheck.allowed) {
+				// Phase 3: Propagate block to related keys
+				const blockPromises = [blockIdentifier(env.RATE_LIMIT_KV, keyIp, PASSKEY_AUTH_RATE_LIMIT)];
+				if (keyUser) blockPromises.push(blockIdentifier(env.RATE_LIMIT_KV, keyUser, PASSKEY_AUTH_RATE_LIMIT));
+				await Promise.all(blockPromises);
 
-			const retryAfter =
-				comboCheck.blockedUntil != null
-					? Math.max(1, Math.ceil((comboCheck.blockedUntil - Date.now()) / 1000))
-					: Math.max(1, Math.ceil(PASSKEY_AUTH_RATE_LIMIT.blockDurationMs / 1000));
+				const retryAfter =
+					comboCheck.blockedUntil != null
+						? Math.max(1, Math.ceil((comboCheck.blockedUntil - Date.now()) / 1000))
+						: Math.max(1, Math.ceil(PASSKEY_AUTH_RATE_LIMIT.blockDurationMs / 1000));
 
-			return new Response(JSON.stringify({ error: 'Too many authentication attempts' }), {
-				status: 429,
-				headers: {
-					'Content-Type': 'application/json',
-					'Retry-After': retryAfter.toString(),
-				},
-			});
+				return new Response(JSON.stringify({ error: 'Too many authentication attempts' }), {
+					status: 429,
+					headers: {
+						'Content-Type': 'application/json',
+						'Retry-After': retryAfter.toString(),
+					},
+				});
+			}
 		}
 
 		const kv = getAuthKV(env);
 
 		// Get user's passkeys
-		const passkeys = await listUserPasskeys(kv, username);
+		const passkeys = username ? await listUserPasskeys(kv, username) : [];
 
 		// SECURITY: To prevent account enumeration, always return 200 with options
 		// If user has no passkeys, return empty allowCredentials
@@ -1202,14 +1197,15 @@ export async function handlePasskeyAuthStart(request: Request, env: Env): Promis
 		const challenge = generateChallenge();
 		const challengeId = crypto.randomUUID();
 
-		// Extract RP ID from WORKER_URL
-		const rpId = new URL(env.WORKER_URL).hostname;
+		// Extract RP ID from request origin (supports both dev and prod)
+		const origin = request.headers.get('Origin') || env.WORKER_URL;
+		const rpId = new URL(origin).hostname;
 
 		// Generate authentication options (empty allowCredentials if no passkeys)
 		const options = generateAuthenticationOptions(username, passkeys, rpId);
 
 		// Save challenge
-		await saveChallenge(kv, challengeId, challenge, username, 300);
+		await saveChallenge(kv, challengeId, challenge, username || '', 300);
 
 		// Serialize options
 		const serializableOptions = {
@@ -1355,14 +1351,15 @@ export async function handlePasskeyAuthFinish(request: Request, env: Env): Promi
 		const storedCredential = JSON.parse(storedDataRaw) as PasskeyCredential;
 
 		// Verify authentication response
-		const rpId = new URL(env.WORKER_URL).hostname;
+		const origin = request.headers.get('Origin') || env.WORKER_URL;
+		const rpId = new URL(origin).hostname;
 		const expectedChallenge = base64urlDecode(challengeRecord.challenge);
 		const verificationResult = await verifyAuthenticationResponse(
 			normalizedCredential,
 			expectedChallenge,
 			storedCredential,
 			rpId,
-			env.WORKER_URL,
+			origin,
 		);
 
 		// Delete challenge
