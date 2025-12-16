@@ -12,6 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
       - name: Create wrangler.toml
         env:
           USERNAME: ${{ secrets.USERNAME || '_user' }}
@@ -59,14 +68,14 @@ jobs:
           fi
 
       - name: Wrangler whoami (auth sanity check)
-        run: npx wrangler whoami
+        run: pnpm exec wrangler whoami
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build Tailwind CSS
         run: |
-          npx @tailwindcss/cli -i ./src/styles/tailwind.css -o ./src/styles/tailwind.generated.css --minify
+          pnpm exec @tailwindcss/cli -i ./src/styles/tailwind.css -o ./src/styles/tailwind.generated.css --minify
           node scripts/embed-tailwind.js
 
       - name: Build & Deploy Worker
