@@ -81,7 +81,7 @@ export async function handleRequest(request: Request, env: Env, ctx: ExecutionCo
 		}
 
 		// Show login page
-		const html = generateLoginHTML(Boolean(env.DEMO_MODE));
+		const html = generateLoginHTML();
 		const response = new Response(html, {
 			status: 200,
 			headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -94,20 +94,9 @@ export async function handleRequest(request: Request, env: Env, ctx: ExecutionCo
 			// Check if it's a browser request (has Accept: text/html)
 			const accept = request.headers.get('Accept') || '';
 			if (accept.includes('text/html')) {
-				// Authenticate first
-				const authContext = await authenticate(request, env);
-				if (!authContext) {
-					// Redirect unauthenticated browser users to login page
-					const response = new Response(null, {
-						status: 302,
-						headers: { Location: '/login' },
-					});
-					setCORSHeaders(response, request, env);
-					return response;
-				}
-
-				// Return the web UI
-				const html = generateHTML('R2 WebDAV', [], '/', Boolean(env.DEMO_MODE));
+				// Return the web UI without authentication check
+				// Frontend will handle authentication using JWT tokens from localStorage
+				const html = generateHTML('R2 WebDAV', [], '/');
 				const response = new Response(html, {
 					status: 200,
 					headers: { 'Content-Type': 'text/html; charset=utf-8' },

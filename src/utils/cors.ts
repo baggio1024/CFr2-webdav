@@ -33,14 +33,6 @@ export function setCORSHeaders(response: Response, request: Request, env: Env): 
 		}
 	}
 
-	// Add localhost for development (optional, comment out for production)
-	if (env.DEMO_MODE) {
-		allowedOrigins.push('http://localhost:8787');
-		allowedOrigins.push('http://127.0.0.1:8787');
-		allowedOrigins.push('http://localhost:3000');
-		allowedOrigins.push('http://127.0.0.1:3000');
-	}
-
 	// Normalize origins by removing trailing slashes for comparison
 	const normalizedAllowed = new Set(allowedOrigins.map((o) => o.replace(/\/$/, '')));
 	const normalizedOrigin = origin ? origin.replace(/\/$/, '') : null;

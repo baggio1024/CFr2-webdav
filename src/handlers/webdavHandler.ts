@@ -143,7 +143,7 @@ async function handleDirectory(
 		});
 	}
 
-	const page = generateHTML('WebDAV File Browser', items, resource_path || '/', env.DEMO_MODE === 'true');
+	const page = generateHTML('WebDAV File Browser', items, resource_path || '/');
 	return new Response(page, {
 		status: 200,
 		headers: { 'Content-Type': 'text/html; charset=utf-8' },

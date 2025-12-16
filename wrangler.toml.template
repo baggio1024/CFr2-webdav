@@ -22,9 +22,6 @@ WORKER_URL = "$WORKER_URL"
 # Optional: Legacy plaintext password (for backward compatibility only, will be removed in future)
 # PASSWORD = "$PASSWORD"
 
-# Optional: Demo mode (for testing only)
-# DEMO_MODE = "true"
-
 # R2 bucket binding
 [[r2_buckets]]
 binding = "BUCKET"

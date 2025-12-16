@@ -173,5 +173,17 @@ dist
 
 .dev.vars
 .wrangler/
+.wrangler-test/
 .codannaignore
 .DS_Store
+wrangler.toml
+
+# Local documentation (not for GitHub)
+
+docs/
+
+# Serena AI tool
+.serena/
+
+# Redis database dump
+dump.rdb

@@ -31,9 +31,6 @@ export interface Env {
 	WORKER_URL: string; // Worker's own URL for CORS validation
 	MAX_FILE_SIZE?: string; // Optional: maximum file size in bytes (default: 100MB)
 	STORAGE_QUOTA?: string; // Optional: total storage quota in bytes (default: 10GB)
-
-	// Feature flags
-	DEMO_MODE?: string; // Enable demo mode for testing
 }
 
 /**
