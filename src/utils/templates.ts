@@ -4,12 +4,10 @@ export function generateHTML(
 	title: string,
 	items: { name: string; href: string }[],
 	currentPath = '/',
-	allowDemo = false,
 ): string {
 	// The heavy UI logic runs on the client; we pass minimal initial data to avoid duplicate fetch.
 	const initialItems = JSON.stringify(items || []);
 	const safeTitle = title || 'R2 WebDAV';
-	const demoFlag = allowDemo ? 'true' : 'false';
 
 	return `
 <!DOCTYPE html>
@@ -34,11 +32,7 @@ export function generateHTML(
     const TRANSLATIONS = {
       zh: {
         title: 'R2 WebDAV',
-        demoMode: '演示模式',
-        liveMode: '在线模式',
         searchPlaceholder: '搜索文件...',
-        switchToLive: '切换到在线模式',
-        liveActive: '在线模式运行中',
         gridView: '网格视图',
         listView: '列表视图',
         disconnect: '断开连接',
@@ -47,7 +41,6 @@ export function generateHTML(
         upload: '上传文件',
         dropToUpload: '释放文件以上传',
         connectionError: '连接错误',
-        demoNote: '注意：演示模式模拟服务器响应。请在设置中切换到在线模式。',
         loading: '加载内容中...',
         emptyFolder: '此文件夹为空',
         emptyFolderDesc: '新建文件夹或拖拽文件到此处开始使用。',
@@ -68,8 +61,9 @@ export function generateHTML(
         username: '用户名',
         password: '密码',
         corsTip: '提示: 确保你的 Cloudflare Worker 允许 CORS (OPTIONS 请求) 以支持浏览器访问。',
-        useDemo: '使用演示模式',
         saveConnect: '保存并连接',
+        logout: '退出登录',
+        logoutConfirm: '确定要退出登录吗？',
         download: '下载',
         delete: '删除',
         language: '语言',
@@ -82,11 +76,7 @@ export function generateHTML(
       },
       en: {
         title: 'R2 WebDAV',
-        demoMode: 'DEMO MODE',
-        liveMode: 'LIVE MODE',
         searchPlaceholder: 'Search files...',
-        switchToLive: 'Switch to Live',
-        liveActive: 'Live Active',
         gridView: 'Grid View',
         listView: 'List View',
         disconnect: 'Disconnect',
@@ -95,7 +85,6 @@ export function generateHTML(
         upload: 'Upload',
         dropToUpload: 'Drop files to upload',
         connectionError: 'Connection Error',
-        demoNote: 'Note: Demo mode simulates responses. Switch to Live mode in settings.',
         loading: 'Fetching contents...',
         emptyFolder: 'This folder is empty',
         emptyFolderDesc: 'Get started by creating a new folder or dragging files here to upload.',
@@ -116,8 +105,9 @@ export function generateHTML(
         username: 'Username',
         password: 'Password',
         corsTip: 'Tip: Ensure your Cloudflare Worker handles OPTIONS requests (CORS) to allow browser access.',
-        useDemo: 'Use Demo Mode',
         saveConnect: 'Save & Connect',
+        logout: 'Logout',
+        logoutConfirm: 'Are you sure you want to logout?',
         download: 'Download',
         delete: 'Delete',
         language: 'Language',
@@ -130,11 +120,6 @@ export function generateHTML(
       },
     };
 
-    // ---- Mock data for demo ----
-    const MOCK_FILES = {
-      "/": ${initialItems},
-    };
-
     // ---- State ----
     const app = document.getElementById('app');
     const initialPath = "${currentPath}";
@@ -144,8 +129,6 @@ export function generateHTML(
     let loading = false;
     let error = null;
     let viewMode = 'grid';
-    const allowDemo = ${demoFlag};
-    let isDemo = false;
     let isDragging = false;
     // 预览态
     let previewFile = null;
@@ -155,7 +138,6 @@ export function generateHTML(
     const storedLang = localStorage.getItem('app_lang');
     const storedTheme = localStorage.getItem('app_theme');
     const storedAuth = JSON.parse(localStorage.getItem('app_auth') || '{}');
-    const storedDemo = localStorage.getItem('app_demo') === '1';
     let lang = storedLang === 'en' || storedLang === 'zh'
       ? storedLang
       : (navigator.language || '').toLowerCase().startsWith('en') ? 'en' : 'zh';
@@ -165,7 +147,6 @@ export function generateHTML(
       username: storedAuth.username || '',
       password: storedAuth.password || '',
     };
-    if (allowDemo && storedDemo) isDemo = true;
 
     const t = () => TRANSLATIONS[lang];
 
@@ -303,6 +284,15 @@ export function generateHTML(
     // ---- Data fetchers ----
     const getHeaders = () => {
       const headers = { Accept: 'application/xml, text/xml' };
+
+      // Try JWT authentication first (from login page)
+      const session = JSON.parse(localStorage.getItem('app_session') || '{}');
+      if (session.accessToken) {
+        headers['Authorization'] = 'Bearer ' + session.accessToken;
+        return headers;
+      }
+
+      // Fallback to Basic Auth (legacy)
       if (auth.username && auth.password) {
         headers['Authorization'] = 'Basic ' + btoa(auth.username + ':' + auth.password);
       }
@@ -312,23 +302,18 @@ export function generateHTML(
     const fetchFiles = async (path) => {
       loading = true; error = null; render();
       try {
-        if (isDemo) {
-          await new Promise((r) => setTimeout(r, 400));
-          files = MOCK_FILES[path] || [];
-        } else {
-          const url = auth.url.replace(/\\/$/, '') + path;
-          const res = await fetch(url, { method: 'PROPFIND', headers: { ...getHeaders(), Depth: '1' } });
-          if (res.status === 401) throw new Error(t().unauthorized);
-          if (!res.ok) throw new Error(t().webdavError + ': ' + res.statusText);
-          const text = await res.text();
-          let parsed = parseWebDAVXML(text);
-          parsed = parsed.filter((f) => {
-            const entryPath = f.href.endsWith('/') ? f.href : f.href + '/';
-            const currentDir = path.endsWith('/') ? path : path + '/';
-            return entryPath !== currentDir && f.href !== path;
-          });
-          files = parsed;
-        }
+        const url = auth.url.replace(/\\/$/, '') + path;
+        const res = await fetch(url, { method: 'PROPFIND', headers: { ...getHeaders(), Depth: '1' } });
+        if (res.status === 401) throw new Error(t().unauthorized);
+        if (!res.ok) throw new Error(t().webdavError + ': ' + res.statusText);
+        const text = await res.text();
+        let parsed = parseWebDAVXML(text);
+        parsed = parsed.filter((f) => {
+          const entryPath = f.href.endsWith('/') ? f.href : f.href + '/';
+          const currentDir = path.endsWith('/') ? path : path + '/';
+          return entryPath !== currentDir && f.href !== path;
+        });
+        files = parsed;
       } catch (e) {
         error = e.message || t().connectionError;
       } finally {
@@ -339,11 +324,6 @@ export function generateHTML(
 
     const handleDelete = async (file) => {
       if (!confirm(t().deleteConfirm.replace('{name}', file.name))) return;
-      if (isDemo) {
-        files = files.filter((f) => f.href !== file.href);
-        render();
-        return;
-      }
       loading = true; render();
       try {
         const url = auth.url.replace(/\\/$/, '') + file.href;
@@ -358,11 +338,6 @@ export function generateHTML(
 
     const handleCreateFolder = async (name) => {
       if (!name) return;
-      if (isDemo) {
-        files.push({ name, type: 'directory', href: (currentPath.endsWith('/') ? currentPath : currentPath + '/') + name + '/', lastModified: new Date().toISOString() });
-        render();
-        return;
-      }
       loading = true; render();
       try {
         const safePath = currentPath.endsWith('/') ? currentPath : currentPath + '/';
@@ -377,10 +352,6 @@ export function generateHTML(
     };
 
     const uploadFile = async (file) => {
-      if (isDemo) {
-        alert(t().uploadSuccess + ': ' + file.name);
-        return;
-      }
       loading = true; render();
       try {
         const safePath = currentPath.endsWith('/') ? currentPath : currentPath + '/';
@@ -402,9 +373,7 @@ export function generateHTML(
       const tdict = t();
       const previewIsImage = previewFile ? isImageFile(previewFile.name) : false;
       const previewSrc = previewFile
-        ? (isDemo
-            ? 'https://placehold.co/1200x800?text=' + encodeURIComponent(previewFile.name)
-            : (auth.url ? auth.url.replace(/\\/$/, '') + previewFile.href : previewFile.href))
+        ? (auth.url ? auth.url.replace(/\\/$/, '') + previewFile.href : previewFile.href)
         : '';
       applyTheme();
 
@@ -418,8 +387,8 @@ export function generateHTML(
               <div>
                 <h1 class="text-xl font-bold text-gray-900 dark:text-white leading-tight tracking-tight">\${tdict.title}</h1>
                 <div class="flex items-center space-x-2">
-                  <span class="inline-block w-2 h-2 rounded-full \${isDemo ? 'bg-amber-400' : 'bg-green-500'}"></span>
-                  <p class="text-xs text-gray-500 dark:text-gray-400 font-medium tracking-wide">\${isDemo ? tdict.demoMode : (auth.url || '').replace(/^https?:\\/\\//,'')}</p>
+                  <span class="inline-block w-2 h-2 rounded-full \${'bg-green-500'}"></span>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 font-medium tracking-wide">\${(auth.url || '').replace(/^https?:\\/\\//,'')}</p>
                 </div>
               </div>
             </div>
@@ -504,7 +473,6 @@ export function generateHTML(
               <div>
                 <h3 class="text-sm font-medium text-red-800 dark:text-red-200">\${tdict.connectionError}</h3>
                 <p class="text-sm text-red-700 dark:text-red-300 mt-1">\${error}</p>
-                \${isDemo ? '<p class="text-xs text-red-600 dark:text-red-400 mt-2">' + tdict.demoNote + '</p>' : ''}
               </div>
             </div>\` : ''}
 
@@ -672,8 +640,15 @@ export function generateHTML(
               </div>
               <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg text-xs text-blue-800 dark:text-blue-300 leading-relaxed border border-blue-100 dark:border-blue-800">\${tdict.corsTip}</div>
               <div class="flex space-x-3">
-                <button id="btnDemo" class="flex-1 px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 font-medium \${allowDemo ? '' : 'hidden'}">\${tdict.useDemo}</button>
                 <button id="btnConnect" class="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white rounded-xl font-medium shadow-md"> \${tdict.saveConnect} </button>
+              </div>
+              <div class="pt-2 border-t border-gray-200 dark:border-gray-700">
+                <button id="btnLogout" class="w-full px-4 py-2.5 border border-red-300 dark:border-red-600 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 font-medium transition-colors">
+                  <svg class="inline-block w-4 h-4 mr-1.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+                  </svg>
+                  \${tdict.logout}
+                </button>
               </div>
             </div>
           </div>
@@ -743,15 +718,6 @@ export function generateHTML(
       document.getElementById('fileInput')?.addEventListener('change', (e) => {
         const f = e.target.files?.[0]; if (f) uploadFile(f);
       });
-      document.getElementById('btnDemo')?.addEventListener('click', () => {
-        if (!allowDemo) return;
-        isDemo = true;
-        localStorage.setItem('app_demo', '1');
-        localStorage.removeItem('app_auth');
-        document.getElementById('modal')?.classList.add('hidden');
-        document.getElementById('modal')?.classList.remove('flex');
-        fetchFiles('/');
-      });
       document.getElementById('btnConnect')?.addEventListener('click', () => {
         const url = document.getElementById('inputUrl').value.trim();
         const user = document.getElementById('inputUser').value.trim();
@@ -759,12 +725,19 @@ export function generateHTML(
         if (!url) { alert('URL required'); return; }
         auth = { url, username: user, password: pass };
         localStorage.setItem('app_auth', JSON.stringify(auth));
-        isDemo = false;
-        localStorage.removeItem('app_demo');
         currentPath = '/';
         document.getElementById('modal')?.classList.add('hidden');
         document.getElementById('modal')?.classList.remove('flex');
         fetchFiles('/');
+      });
+      document.getElementById('btnLogout')?.addEventListener('click', () => {
+        if (confirm(t().logoutConfirm)) {
+          // Clear all authentication data
+          localStorage.removeItem('app_session');
+          localStorage.removeItem('app_auth');
+          // Redirect to login page
+          window.location.href = '/login';
+        }
       });
       document.querySelectorAll('[data-href]').forEach(card => {
         card.addEventListener('click', () => {
@@ -778,11 +751,7 @@ export function generateHTML(
           } else if (isImageFile(file.name)) {
             openPreview(file);
           } else {
-            if (isDemo) {
-              alert(t().demoMode + ': ' + href);
-            } else {
-              window.open(auth.url.replace(/\\/$/, '') + href, '_blank');
-            }
+            window.open(auth.url.replace(/\\/$/, '') + href, '_blank');
           }
         });
       });
@@ -790,7 +759,7 @@ export function generateHTML(
         btn.addEventListener('click', (e) => { e.stopPropagation(); const href = btn.getAttribute('data-del'); const file = files.find(f => f.href === href); if (file) handleDelete(file); });
       });
       document.querySelectorAll('[data-dl]').forEach(btn => {
-        btn.addEventListener('click', (e) => { e.stopPropagation(); const href = btn.getAttribute('data-dl'); if (isDemo) alert(t().demoMode); else window.open(auth.url.replace(/\\/$/, '') + href, '_blank'); });
+        btn.addEventListener('click', (e) => { e.stopPropagation(); const href = btn.getAttribute('data-dl'); window.open(auth.url.replace(/\\/$/, '') + href, '_blank'); });
       });
       const lb = document.getElementById('lightbox');
       if (lb) {
@@ -818,8 +787,19 @@ export function generateHTML(
 
     // Initial render
     render();
-    // Kick off first load (if not demo with initial data)
-    fetchFiles(currentPath);
+
+    // Check authentication before loading data
+    const session = JSON.parse(localStorage.getItem('app_session') || '{}');
+    const hasJWT = session.accessToken;
+    const hasBasicAuth = auth.username && auth.password;
+
+    if (!hasJWT && !hasBasicAuth) {
+      // No authentication found, redirect to login
+      window.location.href = '/login';
+    } else {
+      // Authenticated - load files
+      fetchFiles(currentPath);
+    }
   </script>
 </body>
 </html>
@@ -871,7 +851,7 @@ export function generateErrorHTML(title: string, message: string): string {
  * - WebAuthn Passkey authentication
  * - Token auto-refresh and session management
  */
-export function generateLoginHTML(allowDemo = false): string {
+export function generateLoginHTML(): string {
 	const SESSION_KEY = 'app_session';
 
 	return `
@@ -884,72 +864,49 @@ export function generateLoginHTML(allowDemo = false): string {
   <style>${TAILWIND_CSS}</style>
   <style>
     * { box-sizing: border-box; }
-    .animate-fade-in { animation: fade 0.3s ease-in; }
-    @keyframes fade { from {opacity: 0; transform: translateY(-10px);} to {opacity: 1; transform: translateY(0);} }
-    .btn-primary { @apply w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold shadow-lg transition duration-200; }
-    .btn-secondary { @apply w-full py-3 border border-gray-300 dark:border-gray-700 rounded-xl text-gray-800 dark:text-gray-100 font-semibold hover:bg-gray-50 dark:hover:bg-gray-800 transition duration-200; }
-    .input-field { @apply w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition; }
+    .animate-fade-in { animation: fade 0.4s ease-out; }
+    @keyframes fade { from {opacity: 0; transform: translateY(-8px);} to {opacity: 1; transform: translateY(0);} }
+    .btn-primary { @apply w-full py-3 bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 rounded-lg font-medium shadow-sm hover:shadow-md transition duration-150; }
+    .btn-secondary { @apply w-full py-3 border border-gray-300 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 shadow-sm hover:shadow-md transition duration-150; }
+    .input-field { @apply w-full px-4 py-2.5 rounded-lg border-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-[inset_0_2px_4px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition; }
   </style>
 </head>
-<body class="bg-gray-50 dark:bg-gray-950 text-gray-800 dark:text-gray-100">
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
   <div class="min-h-screen flex items-center justify-center p-6">
-    <div class="max-w-5xl w-full grid lg:grid-cols-2 gap-8">
-      <!-- Left Panel: Branding -->
-      <div class="hidden lg:flex flex-col justify-between bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-3xl p-10 shadow-2xl">
-        <div>
-          <div class="flex items-center space-x-3 mb-6">
-            <div class="bg-white/15 backdrop-blur-sm p-3 rounded-2xl shadow-lg">
-              <svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path d="M4 14v4c0 .55.45 1 1 1h3v-5H4Zm0-4h4V5H5c-.55 0-1 .45-1 1v4Zm6 0h4V5h-4v5Zm0 10h4v-5h-4v5Zm6 0h3c.55 0 1-.45 1-1v-4h-4v5Zm0-10h4V6c0-.55-.45-1-1-1h-3v5Z"/>
-              </svg>
-            </div>
-            <div>
-              <p class="text-sm opacity-90 font-medium">R2 WebDAV</p>
-              <h2 class="text-3xl font-bold tracking-tight">Secure Login</h2>
-            </div>
+    <div class="max-w-md w-full animate-fade-in">
+      <!-- Card Container -->
+      <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-md p-8 border border-gray-200 dark:border-gray-700">
+        <!-- Logo & Brand -->
+        <div class="flex flex-col items-center mb-8">
+          <div class="bg-gray-100 dark:bg-gray-700 p-3 rounded-xl mb-3">
+            <svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" class="text-gray-700 dark:text-gray-300">
+              <path d="M4 14v4c0 .55.45 1 1 1h3v-5H4Zm0-4h4V5H5c-.55 0-1 .45-1 1v4Zm6 0h4V5h-4v5Zm0 10h4v-5h-4v5Zm6 0h3c.55 0 1-.45 1-1v-4h-4v5Zm0-10h4V6c0-.55-.45-1-1-1h-3v5Z"/>
+            </svg>
           </div>
-          <p class="text-white/90 leading-relaxed text-lg">
-            Modern authentication with JWT, 2FA, and Passkey support. No browser popups, seamless token refresh.
-          </p>
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">R2 WebDAV</h2>
         </div>
-        <div class="space-y-3 text-sm text-white/85">
-          <p class="flex items-center space-x-3">
-            <span class="flex-shrink-0 w-2 h-2 bg-emerald-300 rounded-full"></span>
-            <span>Bearer Token authentication (no Basic Auth)</span>
-          </p>
-          <p class="flex items-center space-x-3">
-            <span class="flex-shrink-0 w-2 h-2 bg-emerald-300 rounded-full"></span>
-            <span>2FA & Passkey security</span>
-          </p>
-          <p class="flex items-center space-x-3">
-            <span class="flex-shrink-0 w-2 h-2 bg-emerald-300 rounded-full"></span>
-            <span>Automatic session refresh</span>
-          </p>
-        </div>
-      </div>
 
-      <!-- Right Panel: Login Form -->
-      <div class="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl p-10 border border-gray-100 dark:border-gray-800 animate-fade-in">
-        <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">Welcome Back</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-8">Sign in with your credentials or use Passkey.</p>
+        <!-- Title -->
+        <h1 class="text-2xl font-semibold text-gray-900 dark:text-gray-100 text-center mb-2">Welcome Back</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 text-center mb-10">Sign in to continue</p>
 
         <!-- Step 1: Username/Password -->
         <div id="step-password">
-          <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Username</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Username</label>
           <input
             id="login-username"
             type="text"
-            class="input-field mb-4"
-            placeholder="Enter your username"
+            class="input-field mb-5"
+            placeholder="Enter username"
             autocomplete="username"
           />
 
-          <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Password</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Password</label>
           <input
             id="login-password"
             type="password"
-            class="input-field mb-6"
-            placeholder="Enter your password"
+            class="input-field mb-8"
+            placeholder="Enter password"
             autocomplete="current-password"
           />
 
@@ -960,37 +917,37 @@ export function generateLoginHTML(allowDemo = false): string {
 
         <!-- Step 2: 2FA Verification -->
         <div id="step-2fa" class="hidden">
-          <div class="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
-            <p class="text-sm text-blue-800 dark:text-blue-300">
-              Two-factor authentication is enabled. Please enter your TOTP code or recovery code.
+          <div class="mb-8 p-3.5 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/50 rounded-lg">
+            <p class="text-sm text-gray-700 dark:text-gray-300">
+              Two-factor authentication required. Enter your verification code.
             </p>
           </div>
 
-          <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">TOTP Code</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Verification Code</label>
           <input
             id="login-totp"
             type="text"
-            class="input-field mb-4"
+            class="input-field mb-5"
             placeholder="6-digit code"
             maxlength="6"
             autocomplete="one-time-code"
           />
 
-          <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Recovery Code (optional)</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Recovery Code (optional)</label>
           <input
             id="login-recovery"
             type="text"
-            class="input-field mb-6"
+            class="input-field mb-8"
             placeholder="XXXX-XXXX"
             autocomplete="off"
           />
 
           <button id="btn-2fa" class="btn-primary">
-            Verify & Continue
+            Verify
           </button>
 
           <button id="btn-back" class="btn-secondary mt-3">
-            Back to Login
+            Back
           </button>
         </div>
 
@@ -999,34 +956,22 @@ export function generateLoginHTML(allowDemo = false): string {
           <div class="absolute inset-0 flex items-center">
             <div class="w-full border-t border-gray-200 dark:border-gray-700"></div>
           </div>
-          <div class="relative flex justify-center text-sm">
-            <span class="px-4 bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400">or</span>
+          <div class="relative flex justify-center text-xs">
+            <span class="px-3 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 font-medium">OR</span>
           </div>
         </div>
 
         <!-- Passkey Login -->
-        <button id="btn-passkey" class="btn-secondary">
-          <svg class="inline w-5 h-5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <button id="btn-passkey" class="btn-secondary flex items-center justify-center">
+          <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path d="M15 7a2 2 0 1 1 2-2 2 2 0 0 1-2 2Zm0 0v9m0 0-3 3m3-3 3 3"/>
           </svg>
           Sign in with Passkey
         </button>
 
         <!-- Error Display -->
-        <div id="login-error" class="hidden mt-6 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4"></div>
+        <div id="login-error" class="hidden mt-5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/50 rounded-lg p-3.5"></div>
 
-        <!-- Demo Mode Info -->
-        ${
-					allowDemo
-						? `
-        <div class="mt-6 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-          <p class="text-xs text-amber-800 dark:text-amber-300">
-            Demo mode is available. The application can simulate responses without authentication.
-          </p>
-        </div>
-        `
-						: ''
-				}
       </div>
     </div>
   </div>
