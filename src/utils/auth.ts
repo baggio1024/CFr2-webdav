@@ -1202,7 +1202,7 @@ export async function handlePasskeyAuthStart(request: Request, env: Env): Promis
 		const rpId = new URL(origin).hostname;
 
 		// Generate authentication options (empty allowCredentials if no passkeys)
-		const options = generateAuthenticationOptions(username, passkeys, rpId);
+		const options = generateAuthenticationOptions(username || '', passkeys, rpId);
 
 		// Save challenge
 		await saveChallenge(kv, challengeId, challenge, username || '', 300);
@@ -1262,6 +1262,19 @@ export async function handlePasskeyAuthFinish(request: Request, env: Env): Promi
 
 		const kv = getAuthKV(env);
 
+		// Extract userHandle from credential response
+		const userHandle = (credential as any).response?.userHandle;
+		if (!userHandle) {
+			return new Response(JSON.stringify({ error: 'Missing userHandle in credential' }), {
+				status: 400,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+
+		// Decode userHandle to get userId
+		const userHandleBytes = base64urlDecode(userHandle);
+		const userId = new TextDecoder().decode(userHandleBytes);
+
 		// Retrieve challenge
 		const challengeRecord = await getChallenge(kv, challengeId);
 		if (!challengeRecord) {
@@ -1271,7 +1284,15 @@ export async function handlePasskeyAuthFinish(request: Request, env: Env): Promi
 			});
 		}
 
-		const username = challengeRecord.userId;
+		// If challenge has userId, verify it matches
+		if (challengeRecord.userId && challengeRecord.userId !== userId) {
+			return new Response(JSON.stringify({ error: 'Challenge user mismatch' }), {
+				status: 403,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+
+		const username = userId;
 
 		// Multi-tier rate limiting (IP / User / Combo) to prevent brute force
 		const clientId = getClientIdentifier(request);
