@@ -67,11 +67,11 @@ jobs:
             echo "::error::Missing secret CLOUDFLARE_API_TOKEN (set it in Settings > Secrets > Actions)"; exit 1;
           fi
 
-      - name: Wrangler whoami (auth sanity check)
-        run: pnpm exec wrangler whoami
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Wrangler whoami (auth sanity check)
+        run: pnpm exec wrangler whoami
 
       - name: Build Tailwind CSS
         run: |
