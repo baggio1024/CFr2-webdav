@@ -420,11 +420,12 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
         });
 
         // Success
-        xhr.addEventListener('load', () => {
+        xhr.addEventListener('load', async () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             item.status = 'completed';
             item.progress = 100;
             render();
+            await fetchFiles(currentPath);
             resolve();
           } else {
             item.status = 'error';
@@ -575,7 +576,7 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
                   <span id="avatarInitial">\${userInitial}</span>
                   <span id="2faIndicator" class="hidden absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-gray-900 rounded-full"></span>
                 </button>
-                <div id="avatarDropdown" role="menu" aria-label="用户菜单" class="hidden absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50" style="max-width: calc(100vw - 2rem);">
+                <div id="avatarDropdown" role="menu" aria-label="用户菜单" class="hidden fixed w-64 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50">
                   <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
                     <p class="text-sm font-semibold text-gray-900 dark:text-white" id="dropdownUsername">\${username}</p>
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">已登录</p>
@@ -1054,30 +1055,32 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
       let dropdownOpen = false;
       let dropdownFocusIdx = -1;
 
-      const getViewportWidth = () => {
+      const getViewportMetrics = () => {
         const vv = window.visualViewport;
-        return vv?.width || document.documentElement.clientWidth || window.innerWidth;
+        const width = vv?.width || document.documentElement.clientWidth || window.innerWidth;
+        const height = vv?.height || document.documentElement.clientHeight || window.innerHeight;
+        const offsetLeft = vv?.offsetLeft || 0;
+        const offsetTop = vv?.offsetTop || 0;
+        return { width, height, offsetLeft, offsetTop };
       };
 
       const repositionAvatarDropdown = (dropdown) => {
-        if (!dropdown || dropdown.classList.contains('hidden')) return;
-        dropdown.style.transform = '';
+        if (!dropdown) return;
+        const anchor = document.getElementById('avatarBtn');
+        if (!anchor) return;
 
-        // 预留一点边距，避免阴影被裁切/贴边导致“溢出”观感
-        const viewportPadding = 24;
-        const viewportWidth = getViewportWidth();
-        const rect = dropdown.getBoundingClientRect();
+        const anchorRect = anchor.getBoundingClientRect();
+        const dropdownWidth = dropdown.offsetWidth || 256;
+        const viewportWidth = window.innerWidth;
 
-        let translateX = 0;
-        if (rect.right > viewportWidth - viewportPadding) {
-          translateX -= rect.right - (viewportWidth - viewportPadding);
+        let left = anchorRect.right - dropdownWidth;
+        if (left + dropdownWidth > viewportWidth - 16) {
+          left = viewportWidth - dropdownWidth - 16;
         }
-        if (rect.left < viewportPadding) {
-          translateX += viewportPadding - rect.left;
-        }
-        if (translateX !== 0) {
-          dropdown.style.transform = \`translateX(\${translateX}px)\`;
-        }
+        if (left < 16) left = 16;
+
+        dropdown.style.left = left + 'px';
+        dropdown.style.top = (anchorRect.bottom + 8) + 'px';
       };
 
       const closeDropdown = () => {
@@ -1093,20 +1096,18 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
         const dropdown = document.getElementById('avatarDropdown');
 
         if (dropdown) {
-          const wasHidden = dropdown.classList.contains('hidden');
-          dropdown.classList.toggle('hidden');
-          dropdownOpen = !wasHidden;
+          dropdownOpen = !dropdownOpen;
 
           if (dropdownOpen) {
-            requestAnimationFrame(() => {
-              repositionAvatarDropdown(dropdown);
-              const buttons = dropdown.querySelectorAll('button[role="menuitem"]');
-              if (buttons.length) {
-                dropdownFocusIdx = 0;
-                buttons[0].focus();
-              }
-            });
+            dropdown.classList.remove('hidden');
+            repositionAvatarDropdown(dropdown);
+            const buttons = dropdown.querySelectorAll('button[role="menuitem"]');
+            if (buttons.length) {
+              dropdownFocusIdx = 0;
+              buttons[0].focus();
+            }
           } else {
+            dropdown.classList.add('hidden');
             dropdownFocusIdx = -1;
           }
         }
@@ -1586,33 +1587,39 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
       };
     };
 
-    // Drag & drop
+    // Drag & drop overlay
+    const dropOverlay = document.createElement('div');
+    dropOverlay.id = 'dropOverlay';
+    dropOverlay.className = 'fixed inset-0 z-50 pointer-events-none hidden flex items-center justify-center';
+    dropOverlay.innerHTML = \`
+      <div class="absolute inset-0 bg-blue-500/10 backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-2xl"></div>
+      <div class="relative bg-white dark:bg-gray-800 p-6 rounded-xl shadow-xl flex flex-col items-center animate-bounce border border-gray-200 dark:border-gray-700">
+        <svg class="text-blue-600 dark:text-blue-400 mb-2" width="48" height="48" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 17v2h16v-2M12 12v9m-5-9 5-5 5 5"/></svg>
+        <span class="text-xl font-bold text-blue-800 dark:text-blue-300">\${t().dropToUpload}</span>
+      </div>
+    \`;
+    document.body.appendChild(dropOverlay);
+
     window.addEventListener('dragenter', (e) => {
-      console.log('dragenter', e.target);
       e.preventDefault();
-      isDragging = true;
-      render();
+      dropOverlay.classList.remove('hidden');
     });
     window.addEventListener('dragover', (e) => {
       e.preventDefault();
     });
     window.addEventListener('dragleave', (e) => {
-      console.log('dragleave', e.target, e.clientX, e.clientY);
       e.preventDefault();
       if (e.clientX === 0 && e.clientY === 0) {
-        isDragging = false;
-        render();
+        dropOverlay.classList.add('hidden');
       }
     });
     window.addEventListener('drop', (e) => {
-      console.log('drop triggered', e.dataTransfer.files);
       e.preventDefault();
-      isDragging = false;
+      dropOverlay.classList.add('hidden');
       const files = Array.from(e.dataTransfer.files || []);
       if (files.length > 0) {
         addFilesToQueue(files);
       }
-      render();
     });
 
     // Prevent page close during upload

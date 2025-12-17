@@ -171,15 +171,40 @@ export function generateLoginScript(sessionKey: string): string {
       });
     };
 
+    // 检查是否已登录
+    const checkExistingSession = () => {
+      try {
+        const sessionData = localStorage.getItem(SESSION_KEY);
+        if (sessionData) {
+          const session = JSON.parse(sessionData);
+          if (session.accessToken && session.expiresAt && session.expiresAt > Date.now()) {
+            // Token 有效，跳转到首页
+            window.location.href = '/';
+            return true;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to check session:', e);
+      }
+      return false;
+    };
+
     // Initialize on load
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => {
+        // 在初始化前先检查登录状态
+        if (checkExistingSession()) {
+          return; // 如果已跳转，不再执行后续初始化
+        }
         initFloatingLabels();
         initOTPInputs();
       });
     } else {
-      initFloatingLabels();
-      initOTPInputs();
+      // 在初始化前先检查登录状态
+      if (!checkExistingSession()) {
+        initFloatingLabels();
+        initOTPInputs();
+      }
     }
 
     // Session Management
