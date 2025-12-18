@@ -3,6 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2025-12-09"
 account_id = "$ACCOUNT_ID"
 
+# Custom domain
+[[routes]]
+pattern = "webdav.amoze.cc"
+zone_name = "amoze.cc"
+custom_domain = true
+
 [vars]
 # Basic configuration
 USERNAME = "$USERNAME"
