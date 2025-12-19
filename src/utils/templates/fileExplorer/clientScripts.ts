@@ -1246,6 +1246,163 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
         };
       };
 
+      // TOTP Modal Functions
+      const openTotpModal = async () => {
+        const content = document.getElementById('totpModalContent');
+        openModal('totpModal', document.getElementById('menuTotp'));
+
+        try {
+          const res = await fetch('/auth/2fa/status', { headers: await getHeaders() });
+          const data = await res.json();
+
+          if (data.enabled) {
+            content.innerHTML = \`
+              <div class="text-center space-y-4">
+                <div class="w-16 h-16 mx-auto bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center">
+                  <svg class="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                </div>
+                <p class="text-sm text-gray-600 dark:text-gray-400">动态验证码已启用</p>
+                <div class="space-y-2">
+                  <button id="btnResetTotp" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">重置动态验证码</button>
+                  <button id="btnDisableTotp" class="w-full px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg">禁用动态验证码</button>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-500">重置会生成新的密钥和恢复码，需要重新在认证器中添加。</p>
+              </div>
+            \`;
+
+            document.getElementById('btnResetTotp')?.addEventListener('click', resetTotp);
+            document.getElementById('btnDisableTotp')?.addEventListener('click', disableTotp);
+          } else {
+            content.innerHTML = '<div class="text-center"><p class="text-sm text-gray-600 dark:text-gray-400 mb-4">正在初始化...</p></div>';
+            await setupTotp();
+          }
+        } catch (e) {
+          content.innerHTML = \`<p class="text-red-600">加载失败: \${e.message}</p>\`;
+        }
+      };
+
+      const resetTotp = async () => {
+        if (!confirm('确定要重置动态验证码吗？这会生成新的密钥和恢复码，需要重新绑定认证器。')) return;
+
+        const password = prompt('请输入密码以重置动态验证码:');
+        if (!password) return;
+
+        const content = document.getElementById('totpModalContent');
+        content.innerHTML = '<div class="text-center"><p class="text-sm text-gray-600 dark:text-gray-400 mb-4">正在重置...</p></div>';
+
+        try {
+          const res = await fetch('/auth/2fa/disable', {
+            method: 'POST',
+            headers: { ...(await getHeaders()), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+          });
+
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(payload.error || '重置失败');
+
+          setTimeout(check2FAStatus, 100);
+          await setupTotp();
+        } catch (e) {
+          content.innerHTML = \`<p class="text-red-600">重置失败: \${e.message}</p>\`;
+        }
+      };
+
+      const setupTotp = async () => {
+        const content = document.getElementById('totpModalContent');
+
+        try {
+          const res = await fetch('/auth/2fa/setup', {
+            method: 'POST',
+            headers: await getHeaders()
+          });
+
+          if (!res.ok) throw new Error('初始化失败');
+
+          const data = await res.json();
+
+          const qrImgSrc = data.qrCodeUri.startsWith('data:image')
+            ? data.qrCodeUri
+            : \`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=\${encodeURIComponent(data.qrCodeUri)}\`;
+
+          content.innerHTML = \`
+            <div class="space-y-3">
+              <div class="text-center">
+                <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">使用认证器应用扫描二维码</p>
+                <div class="inline-block p-3 bg-white rounded-lg">
+                  <img src="\${qrImgSrc}" alt="QR Code" class="w-40 h-40" />
+                </div>
+                <p class="text-xs text-gray-500 mt-2">
+                  或手动输入密钥: <code class="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">\${data.secret}</code>
+                </p>
+              </div>
+
+              <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                <p class="text-sm font-semibold text-yellow-800 dark:text-yellow-200 mb-2">恢复码（请妥善保存）</p>
+                <div class="grid grid-cols-2 gap-1.5 text-xs font-mono">
+                  \${data.recoveryCodes.map(code => \`<div class="bg-white dark:bg-gray-800 px-2 py-1 rounded">\${code}</div>\`).join('')}
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">输入验证码确认</label>
+                <input id="totpVerifyCode" type="text" maxlength="6" pattern="[0-9]{6}" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-center text-lg tracking-widest" placeholder="000000" />
+              </div>
+
+              <button id="btnVerifyTotp" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">确认启用</button>
+            </div>
+          \`;
+
+          document.getElementById('btnVerifyTotp')?.addEventListener('click', async () => {
+            const code = document.getElementById('totpVerifyCode').value;
+            if (!/^\\d{6}$/.test(code)) {
+              alert('请输入6位数字验证码');
+              return;
+            }
+
+            try {
+              const verifyRes = await fetch('/auth/2fa/verify-setup', {
+                method: 'POST',
+                headers: { ...(await getHeaders()), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code })
+              });
+
+              if (!verifyRes.ok) throw new Error('验证失败');
+
+              alert('动态验证码已成功启用！');
+              document.getElementById('totpModal')?.classList.add('hidden');
+              document.getElementById('totpModal')?.classList.remove('flex');
+              setTimeout(check2FAStatus, 100);
+            } catch (e) {
+              alert('验证失败: ' + e.message);
+            }
+          });
+        } catch (e) {
+          content.innerHTML = \`<p class="text-red-600">设置失败: \${e.message}</p>\`;
+        }
+      };
+
+      const disableTotp = async () => {
+        const password = prompt('请输入密码以禁用动态验证码:');
+        if (!password) return;
+
+        try {
+          const res = await fetch('/auth/2fa/disable', {
+            method: 'POST',
+            headers: { ...(await getHeaders()), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+          });
+
+          if (!res.ok) throw new Error('禁用失败');
+
+          alert('动态验证码已禁用');
+          document.getElementById('totpModal')?.classList.add('hidden');
+          document.getElementById('totpModal')?.classList.remove('flex');
+          setTimeout(check2FAStatus, 100);
+        } catch (e) {
+          alert('禁用失败: ' + e.message);
+        }
+      };
+
       // attach events
       const searchInput = document.getElementById('searchInput');
       searchInput?.addEventListener('input', (e) => {
@@ -1558,163 +1715,6 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
 
           images.forEach(img => imageObserver.observe(img));
         }
-      }
-    };
-
-    // TOTP Modal Functions
-    const openTotpModal = async () => {
-      const content = document.getElementById('totpModalContent');
-      openModal('totpModal', document.getElementById('menuTotp'));
-
-      try {
-        const res = await fetch('/auth/2fa/status', { headers: await getHeaders() });
-        const data = await res.json();
-
-        if (data.enabled) {
-          content.innerHTML = \`
-            <div class="text-center space-y-4">
-              <div class="w-16 h-16 mx-auto bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center">
-                <svg class="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
-              </div>
-              <p class="text-sm text-gray-600 dark:text-gray-400">动态验证码已启用</p>
-              <div class="space-y-2">
-                <button id="btnResetTotp" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">重置动态验证码</button>
-                <button id="btnDisableTotp" class="w-full px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg">禁用动态验证码</button>
-              </div>
-              <p class="text-xs text-gray-500 dark:text-gray-500">重置会生成新的密钥和恢复码，需要重新在认证器中添加。</p>
-            </div>
-          \`;
-
-          document.getElementById('btnResetTotp')?.addEventListener('click', resetTotp);
-          document.getElementById('btnDisableTotp')?.addEventListener('click', disableTotp);
-        } else {
-          content.innerHTML = '<div class="text-center"><p class="text-sm text-gray-600 dark:text-gray-400 mb-4">正在初始化...</p></div>';
-          await setupTotp();
-        }
-      } catch (e) {
-        content.innerHTML = \`<p class="text-red-600">加载失败: \${e.message}</p>\`;
-      }
-    };
-
-    const resetTotp = async () => {
-      if (!confirm('确定要重置动态验证码吗？这会生成新的密钥和恢复码，需要重新绑定认证器。')) return;
-
-      const password = prompt('请输入密码以重置动态验证码:');
-      if (!password) return;
-
-      const content = document.getElementById('totpModalContent');
-      content.innerHTML = '<div class="text-center"><p class="text-sm text-gray-600 dark:text-gray-400 mb-4">正在重置...</p></div>';
-
-      try {
-        const res = await fetch('/auth/2fa/disable', {
-          method: 'POST',
-          headers: { ...(await getHeaders()), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password })
-        });
-
-        const payload = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(payload.error || '重置失败');
-
-        setTimeout(check2FAStatus, 100);
-        await setupTotp();
-      } catch (e) {
-        content.innerHTML = \`<p class="text-red-600">重置失败: \${e.message}</p>\`;
-      }
-    };
-
-    const setupTotp = async () => {
-      const content = document.getElementById('totpModalContent');
-
-      try {
-        const res = await fetch('/auth/2fa/setup', {
-          method: 'POST',
-          headers: await getHeaders()
-        });
-
-        if (!res.ok) throw new Error('初始化失败');
-
-        const data = await res.json();
-
-        const qrImgSrc = data.qrCodeUri.startsWith('data:image')
-          ? data.qrCodeUri
-          : \`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=\${encodeURIComponent(data.qrCodeUri)}\`;
-
-        content.innerHTML = \`
-          <div class="space-y-3">
-            <div class="text-center">
-              <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">使用认证器应用扫描二维码</p>
-              <div class="inline-block p-3 bg-white rounded-lg">
-                <img src="\${qrImgSrc}" alt="QR Code" class="w-40 h-40" />
-              </div>
-              <p class="text-xs text-gray-500 mt-2">
-                或手动输入密钥: <code class="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">\${data.secret}</code>
-              </p>
-            </div>
-
-            <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
-              <p class="text-sm font-semibold text-yellow-800 dark:text-yellow-200 mb-2">恢复码（请妥善保存）</p>
-              <div class="grid grid-cols-2 gap-1.5 text-xs font-mono">
-                \${data.recoveryCodes.map(code => \`<div class="bg-white dark:bg-gray-800 px-2 py-1 rounded">\${code}</div>\`).join('')}
-              </div>
-            </div>
-
-            <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">输入验证码确认</label>
-              <input id="totpVerifyCode" type="text" maxlength="6" pattern="[0-9]{6}" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-center text-lg tracking-widest" placeholder="000000" />
-            </div>
-
-            <button id="btnVerifyTotp" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">确认启用</button>
-          </div>
-        \`;
-
-        document.getElementById('btnVerifyTotp')?.addEventListener('click', async () => {
-          const code = document.getElementById('totpVerifyCode').value;
-          if (!/^\\d{6}$/.test(code)) {
-            alert('请输入6位数字验证码');
-            return;
-          }
-
-          try {
-            const verifyRes = await fetch('/auth/2fa/verify-setup', {
-              method: 'POST',
-              headers: { ...(await getHeaders()), 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code })
-            });
-
-            if (!verifyRes.ok) throw new Error('验证失败');
-
-            alert('动态验证码已成功启用！');
-            document.getElementById('totpModal')?.classList.add('hidden');
-            document.getElementById('totpModal')?.classList.remove('flex');
-            setTimeout(check2FAStatus, 100);
-          } catch (e) {
-            alert('验证失败: ' + e.message);
-          }
-        });
-      } catch (e) {
-        content.innerHTML = \`<p class="text-red-600">设置失败: \${e.message}</p>\`;
-      }
-    };
-
-    const disableTotp = async () => {
-      const password = prompt('请输入密码以禁用动态验证码:');
-      if (!password) return;
-
-      try {
-        const res = await fetch('/auth/2fa/disable', {
-          method: 'POST',
-          headers: { ...(await getHeaders()), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password })
-        });
-
-        if (!res.ok) throw new Error('禁用失败');
-
-        alert('动态验证码已禁用');
-        document.getElementById('totpModal')?.classList.add('hidden');
-        document.getElementById('totpModal')?.classList.remove('flex');
-        setTimeout(check2FAStatus, 100);
-      } catch (e) {
-        alert('禁用失败: ' + e.message);
       }
     };
 
