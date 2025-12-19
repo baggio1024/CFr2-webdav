@@ -34,6 +34,7 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
     let previewScale = 1;
     let previewRotation = 0;
     let previewKeyHandler = null;
+    let detailFile = null;
     const storedLang = localStorage.getItem('app_lang');
     const storedTheme = localStorage.getItem('app_theme');
     const storedAuth = JSON.parse(localStorage.getItem('app_auth') || '{}');
@@ -209,6 +210,36 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
         URL.revokeObjectURL(previewFile.blobUrl);
       }
       previewFile = null;
+      render();
+    };
+
+    const showDetail = (file) => {
+      detailFile = file;
+      render();
+
+      if (isImageFile(file.name) && !file.thumbnailUrl && !file.blobUrl) {
+        (async () => {
+          try {
+            const url = auth.url ? auth.url.replace(/\\/$/, '') + file.href : file.href;
+            const headers = await getHeaders();
+            const response = await fetch(url, { headers });
+            if (response.ok) {
+              const blob = await response.blob();
+              file.blobUrl = URL.createObjectURL(blob);
+              render();
+            }
+          } catch (e) {
+            console.error('Failed to load image:', e);
+          }
+        })();
+      }
+    };
+
+    const closeDetail = () => {
+      if (detailFile?.blobUrl) {
+        URL.revokeObjectURL(detailFile.blobUrl);
+      }
+      detailFile = null;
       render();
     };
 
@@ -784,7 +815,8 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
           </div>
         </div>
 
-        <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex gap-6">
+          <div class="flex-1 min-w-0">
           \${uploadQueue.length > 0 ? \`
             <div class="fixed bottom-4 right-4 w-96 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden z-40">
               <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gradient-to-r from-blue-50 to-white dark:from-gray-800 dark:to-gray-800">
@@ -878,18 +910,18 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
               <p class="mt-2 text-sm text-gray-500 dark:text-gray-400 max-w-sm mx-auto">\${tdict.emptyFolderDesc}</p>
             </div>\`
           : viewMode === 'grid' ? \`
-            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
               \${sorted.map(file => \`
                 <div data-href="\${file.href}" data-type="\${file.type}" data-name="\${file.name}"
-                  class="group relative bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 hover:shadow-md hover:border-blue-400 dark:hover:border-blue-500 hover:bg-gray-50 dark:hover:bg-gray-750 transition cursor-pointer flex flex-col items-center text-center aspect-[4/5] justify-between">
-                  <div class="flex-1 flex items-center justify-center w-full transform group-hover:scale-105 transition">
+                  class="group relative flex flex-col justify-between p-4 rounded-2xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-blue-500/30 dark:hover:border-blue-400/30 transition-all duration-300 cursor-pointer overflow-hidden">
+                  <div class="flex-1 flex items-center justify-center w-full transform group-hover:scale-110 transition-transform duration-500 ease-out py-2">
                     \${renderFileIcon(file)}
                   </div>
-                  <div class="w-full mt-3">
-                    <h3 class="text-sm font-medium text-gray-900 dark:text-gray-100 truncate px-1" title="\${file.name}">\${file.name}</h3>
-                    <div class="mt-1 text-xs text-gray-400 dark:text-gray-500 font-normal">\${file.type === 'directory' ? formatDate(file.lastModified).split(' ')[0] : formatBytes(file.size)}</div>
+                  <div class="w-full mt-4 text-center z-10 relative">
+                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 truncate px-1 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors" title="\${file.name}">\${file.name}</h3>
+                    <div class="mt-1 text-xs text-gray-400 dark:text-gray-500 font-medium tracking-wide">\${file.type === 'directory' ? formatDate(file.lastModified).split(' ')[0] : formatBytes(file.size)}</div>
                   </div>
-                  <button data-del="\${file.href}" class="absolute top-2 right-2 p-1.5 bg-white/90 dark:bg-gray-700/90 text-gray-400 dark:text-gray-300 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition transform scale-90 group-hover:scale-100" title="\${tdict.delete}">
+                  <button data-del="\${file.href}" class="absolute top-3 right-3 p-2 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 rounded-xl shadow-sm opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110 z-20" title="\${tdict.delete}">
                     <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                   </button>
                 </div>\`).join('')}
@@ -936,7 +968,157 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
                 </tbody>
               </table>
             </div>\`}
+          </div>
+
+          \${detailFile ? \`
+            <!-- 桌面端详情面板 -->
+            <div class="hidden lg:block w-80 flex-shrink-0">
+              <div class="sticky top-24 bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl rounded-2xl shadow-xl border border-white/20 dark:border-gray-700 overflow-hidden ring-1 ring-black/5 transition-all duration-300">
+                <!-- 头部 -->
+                <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700/50 flex items-center justify-between bg-gradient-to-r from-gray-50/50 to-white/50 dark:from-gray-800/50 dark:to-gray-800/50">
+                  <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100 tracking-wide">文件详情</h3>
+                  <button id="detailClose" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700" title="关闭">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+
+                <!-- 图标/缩略图区域 -->
+                <div class="p-6 flex items-center justify-center bg-gray-50/30 dark:bg-gray-900/20">
+                  <div class="\${isImageFile(detailFile.name) ? 'w-full aspect-square cursor-pointer shadow-sm' : 'w-32 h-32'} transform transition hover:scale-105 duration-300" id="detailThumbnail">
+                    \${isImageFile(detailFile.name) ? \`
+                      <div class="w-full h-full overflow-hidden rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 flex items-center justify-center">
+                        \${detailFile.blobUrl || detailFile.thumbnailUrl ? \`
+                          <img src="\${detailFile.blobUrl || detailFile.thumbnailUrl}" alt="\${detailFile.name}" class="w-full h-full object-cover" />
+                        \` : \`
+                          <svg class="text-purple-500 w-16 h-16 animate-pulse" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                        \`}
+                      </div>
+                    \` : \`
+                      <div class="flex items-center justify-center filter drop-shadow-md">
+                        \${renderFileIcon(detailFile, 128)}
+                      </div>
+                    \`}
+                  </div>
+                </div>
+
+                <!-- 信息区域 -->
+                <div class="px-5 pb-5 space-y-4">
+                  <div>
+                    <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">文件名</label>
+                    <p class="text-sm font-medium text-gray-900 dark:text-gray-100 break-words mt-1 leading-relaxed">\${detailFile.name}</p>
+                  </div>
+                  <div>
+                    <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">路径</label>
+                    <p class="text-xs text-gray-600 dark:text-gray-400 break-all mt-1 font-mono bg-gray-50 dark:bg-gray-900/50 p-2 rounded-lg border border-gray-100 dark:border-gray-700/50">\${detailFile.href}</p>
+                  </div>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div>
+                      <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">大小</label>
+                      <p class="text-sm text-gray-900 dark:text-gray-100 mt-1">\${formatBytes(detailFile.size)}</p>
+                    </div>
+                    <div>
+                      <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">类型</label>
+                      <p class="text-sm text-gray-900 dark:text-gray-100 mt-1">\${(detailFile.name.split('.').pop() || '-').toUpperCase()}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">修改时间</label>
+                    <p class="text-sm text-gray-900 dark:text-gray-100 mt-1">\${formatDate(detailFile.lastModified)}</p>
+                  </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="p-5 border-t border-gray-100 dark:border-gray-700/50 space-y-3 bg-gray-50/50 dark:bg-gray-900/30 backdrop-blur-sm">
+                  <button id="detailDownload" class="w-full px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-semibold shadow-lg shadow-blue-500/30 transition-all duration-200 transform hover:scale-[1.02] flex items-center justify-center space-x-2">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 17v2h16v-2"/><path d="M12 12v9m-5-9 5-5 5 5"/></svg>
+                    <span>下载</span>
+                  </button>
+                  <button id="detailDelete" class="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-red-100 dark:border-red-900/30 text-red-500 dark:text-red-400 rounded-xl font-medium hover:bg-red-50 dark:hover:bg-red-900/10 transition-all duration-200 shadow-sm hover:shadow flex items-center justify-center space-x-2">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span>删除</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 移动端详情面板 -->
+            <div class="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+              <div class="bg-white dark:bg-gray-800 rounded-t-3xl sm:rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto border border-gray-200 dark:border-gray-700 ring-1 ring-black/5">
+                <!-- 拖拽手柄 -->
+                <div class="w-full flex justify-center pt-3 pb-1 sm:hidden">
+                  <div class="w-12 h-1.5 bg-gray-300 dark:bg-gray-600 rounded-full"></div>
+                </div>
+
+                <!-- 头部 -->
+                <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700/50 flex items-center justify-between sticky top-0 bg-white/95 dark:bg-gray-800/95 backdrop-blur z-10">
+                  <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">文件详情</h3>
+                  <button id="detailCloseMobile" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700" title="关闭">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+
+                <!-- 图标/缩略图区域 -->
+                <div class="p-6 flex items-center justify-center bg-gray-50/30 dark:bg-gray-900/20">
+                  <div class="\${isImageFile(detailFile.name) ? 'w-full max-w-xs aspect-square cursor-pointer shadow-md' : 'w-32 h-32'} transform transition duration-300" id="detailThumbnailMobile">
+                    \${isImageFile(detailFile.name) ? \`
+                      <div class="w-full h-full overflow-hidden rounded-2xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 flex items-center justify-center">
+                        \${detailFile.blobUrl || detailFile.thumbnailUrl ? \`
+                          <img src="\${detailFile.blobUrl || detailFile.thumbnailUrl}" alt="\${detailFile.name}" class="w-full h-full object-cover" />
+                        \` : \`
+                          <svg class="text-purple-500 w-16 h-16 animate-pulse" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                        \`}
+                      </div>
+                    \` : \`
+                      <div class="flex items-center justify-center filter drop-shadow-md">
+                        \${renderFileIcon(detailFile, 128)}
+                      </div>
+                    \`}
+                  </div>
+                </div>
+
+                <!-- 信息区域 -->
+                <div class="px-6 space-y-5">
+                  <div>
+                    <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">文件名</label>
+                    <p class="text-base font-medium text-gray-900 dark:text-gray-100 break-words mt-1">\${detailFile.name}</p>
+                  </div>
+                  <div>
+                    <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">路径</label>
+                    <p class="text-sm text-gray-600 dark:text-gray-400 break-all mt-1 font-mono bg-gray-50 dark:bg-gray-900/50 p-2.5 rounded-xl border border-gray-100 dark:border-gray-700/50">\${detailFile.href}</p>
+                  </div>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div>
+                      <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">大小</label>
+                      <p class="text-base font-medium text-gray-900 dark:text-gray-100 mt-1">\${formatBytes(detailFile.size)}</p>
+                    </div>
+                    <div>
+                      <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">类型</label>
+                      <p class="text-base font-medium text-gray-900 dark:text-gray-100 mt-1">\${(detailFile.name.split('.').pop() || '-').toUpperCase()}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">修改时间</label>
+                    <p class="text-base font-medium text-gray-900 dark:text-gray-100 mt-1">\${formatDate(detailFile.lastModified)}</p>
+                  </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="p-6 border-t border-gray-100 dark:border-gray-700/50 space-y-3 mt-4">
+                  <button id="detailDownloadMobile" class="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-blue-500/30 transition-transform active:scale-95 flex items-center justify-center space-x-2">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 17v2h16v-2"/><path d="M12 12v9m-5-9 5-5 5 5"/></svg>
+                    <span>下载文件</span>
+                  </button>
+                  <button id="detailDeleteMobile" class="w-full px-4 py-3 bg-white dark:bg-gray-800 border border-red-100 dark:border-red-900/30 text-red-500 dark:text-red-400 rounded-xl font-bold hover:bg-red-50 dark:hover:bg-red-900/10 transition-transform active:scale-95 flex items-center justify-center space-x-2">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span>删除文件</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          \` : ''}
         </main>
+
+        <div id="contextMenu" role="menu" class="hidden fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl min-w-[180px] py-1 animate-fade-in"></div>
 
         \${isDragging ? \`
           <div class="fixed inset-0 z-50 pointer-events-none flex items-center justify-center">
@@ -980,7 +1162,7 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
         : ''}
 
         <div id="modal" role="dialog" aria-labelledby="modalTitle" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 dark:border-gray-700">
+          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md sm:max-w-lg lg:max-w-2xl w-full overflow-hidden border border-gray-100 dark:border-gray-700">
             <div class="px-6 py-4 bg-gradient-to-r from-gray-50 to-white dark:from-gray-800 dark:to-gray-800 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
               <div class="flex items-center space-x-2">
                 <svg class="text-gray-500 dark:text-gray-400" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
@@ -1545,6 +1727,123 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
         }
       });
 
+      let contextMenuOpen = false;
+      let contextMenuFocusIdx = -1;
+      let currentMenuItems = [];
+
+      const positionContextMenu = (menu, x, y) => {
+        const rect = menu.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        let left = x;
+        let top = y;
+        if (left + rect.width > vw - 16) left = vw - rect.width - 16;
+        if (top + rect.height > vh - 16) top = vh - rect.height - 16;
+        if (left < 16) left = 16;
+        if (top < 16) top = 16;
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+      };
+
+      const closeContextMenu = () => {
+        const menu = document.getElementById('contextMenu');
+        if (menu) {
+          menu.classList.add('hidden');
+          menu.innerHTML = '';
+        }
+        contextMenuOpen = false;
+        contextMenuFocusIdx = -1;
+        currentMenuItems = [];
+      };
+
+      const openContextMenu = (x, y, items) => {
+        const menu = document.getElementById('contextMenu');
+        if (!menu) return;
+        currentMenuItems = items;
+        menu.innerHTML = items.map((item, idx) => \`
+          <button data-ctx-idx="\${idx}" class="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center space-x-2 transition" role="menuitem">
+            \${item.icon ? \`<span class="w-4 h-4 flex-shrink-0">\${item.icon}</span>\` : ''}
+            <span class="flex-1">\${item.text}</span>
+            \${item.submenu ? '<svg class="ml-auto w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>' : ''}
+          </button>
+        \`).join('');
+        menu.classList.remove('hidden');
+        positionContextMenu(menu, x, y);
+        contextMenuOpen = true;
+        contextMenuFocusIdx = 0;
+        const buttons = menu.querySelectorAll('button');
+        buttons.forEach((btn, idx) => {
+          btn.addEventListener('click', () => {
+            const item = currentMenuItems[idx];
+            if (item.action) item.action();
+            closeContextMenu();
+          });
+        });
+        if (buttons.length) buttons[0].focus();
+      };
+
+      document.addEventListener('contextmenu', (e) => {
+        const fileCard = e.target.closest('[data-href]');
+        if (!fileCard) return;
+        e.preventDefault();
+        const href = fileCard.dataset.href;
+        const isDir = fileCard.dataset.type === 'directory';
+        const items = [];
+        if (!isDir) {
+          items.push({
+            text: tdict.download || '下载',
+            icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+            action: () => {
+              const a = document.createElement('a');
+              a.href = href;
+              a.download = '';
+              a.click();
+            }
+          });
+        }
+        items.push({
+          text: tdict.delete || '删除',
+          icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+          action: async () => {
+            if (!confirm(tdict.confirmDelete || '确认删除？')) return;
+            try {
+              const res = await fetch(href, { method: 'DELETE', headers: await getHeaders() });
+              if (!res.ok) throw new Error(await res.text());
+              await loadFiles(currentPath);
+            } catch (err) {
+              alert((tdict.deleteFailed || '删除失败') + ': ' + err.message);
+            }
+          }
+        });
+        openContextMenu(e.clientX, e.clientY, items);
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (!contextMenuOpen) return;
+        const menu = document.getElementById('contextMenu');
+        if (!menu) return;
+        const buttons = Array.from(menu.querySelectorAll('button'));
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          contextMenuFocusIdx = Math.min(contextMenuFocusIdx + 1, buttons.length - 1);
+          buttons[contextMenuFocusIdx]?.focus();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          contextMenuFocusIdx = Math.max(contextMenuFocusIdx - 1, 0);
+          buttons[contextMenuFocusIdx]?.focus();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeContextMenu();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        const menu = document.getElementById('contextMenu');
+        if (menu && contextMenuOpen && !menu.contains(e.target)) {
+          closeContextMenu();
+        }
+      });
+
       // Menu item: TOTP
       document.getElementById('menuTotp')?.addEventListener('click', () => {
         closeDropdown();
@@ -1651,10 +1950,8 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
           if (type === 'directory') {
             currentPath = href.endsWith('/') ? href : href + '/';
             fetchFiles(currentPath);
-          } else if (isImageFile(file.name)) {
-            openPreview(file);
           } else {
-            downloadFile(href, file.name);
+            showDetail(file);
           }
         });
       });
@@ -1681,6 +1978,32 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
       bindLb('lb-rotate', () => { previewRotation = (previewRotation + 90) % 360; applyLightboxTransform(); });
       applyLightboxTransform();
       attachPreviewKeydown();
+
+      // Detail panel events
+      document.getElementById('detailClose')?.addEventListener('click', closeDetail);
+      document.getElementById('detailCloseMobile')?.addEventListener('click', closeDetail);
+      document.getElementById('detailDownload')?.addEventListener('click', () => {
+        if (detailFile) downloadFile(detailFile.href, detailFile.name);
+      });
+      document.getElementById('detailDownloadMobile')?.addEventListener('click', () => {
+        if (detailFile) downloadFile(detailFile.href, detailFile.name);
+      });
+      document.getElementById('detailDelete')?.addEventListener('click', () => {
+        if (detailFile) handleDelete(detailFile);
+      });
+      document.getElementById('detailDeleteMobile')?.addEventListener('click', () => {
+        if (detailFile) handleDelete(detailFile);
+      });
+      document.getElementById('detailThumbnail')?.addEventListener('click', () => {
+        if (detailFile && isImageFile(detailFile.name)) {
+          openPreview(detailFile);
+        }
+      });
+      document.getElementById('detailThumbnailMobile')?.addEventListener('click', () => {
+        if (detailFile && isImageFile(detailFile.name)) {
+          openPreview(detailFile);
+        }
+      });
 
       // TOTP Modal close
       document.getElementById('totpModalClose')?.addEventListener('click', () => {
