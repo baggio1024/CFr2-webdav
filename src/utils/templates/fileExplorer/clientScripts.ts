@@ -1116,6 +1116,136 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
         }
       });
 
+      // Passkey Modal Functions
+      const openPasskeyModal = async () => {
+        openModal('passkeyModal', document.getElementById('menuPasskey'));
+        await loadPasskeys();
+      };
+
+      const loadPasskeys = async () => {
+        const content = document.getElementById('passkeyModalContent');
+
+        try {
+          const res = await fetch('/auth/passkeys', { headers: await getHeaders() });
+          const data = await res.json();
+
+          content.innerHTML = \`
+            <div class="space-y-4">
+              <button id="btnAddPasskey" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center space-x-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>添加新Passkey</span>
+              </button>
+
+              \${data.passkeys.length === 0 ? \`
+                <div class="text-center py-8 text-gray-500 dark:text-gray-400">
+                  <p class="text-sm">暂无Passkey</p>
+                </div>
+              \` : \`
+                <div class="space-y-2">
+                  \${data.passkeys.map(pk => \`
+                    <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                      <div class="flex-1">
+                        <p class="text-sm font-medium text-gray-900 dark:text-white">\${pk.name}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">\${new Date(pk.createdAt).toLocaleDateString()}</p>
+                      </div>
+                      <button data-passkey-id="\${pk.id}" class="btn-delete-passkey p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                      </button>
+                    </div>
+                  \`).join('')}
+                </div>
+              \`}
+            </div>
+          \`;
+
+          document.getElementById('btnAddPasskey')?.addEventListener('click', registerPasskey);
+          document.querySelectorAll('.btn-delete-passkey').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+              const id = e.currentTarget.getAttribute('data-passkey-id');
+              if (confirm('确定删除此Passkey？')) {
+                await deletePasskey(id);
+              }
+            });
+          });
+        } catch (e) {
+          content.innerHTML = \`<p class="text-red-600">加载失败: \${e.message}</p>\`;
+        }
+      };
+
+      const registerPasskey = async () => {
+        try {
+          const startRes = await fetch('/auth/passkey/register/start', {
+            method: 'POST',
+            headers: await getHeaders()
+          });
+          const { options, challengeId } = await startRes.json();
+
+          const credential = await navigator.credentials.create({
+            publicKey: {
+              ...options,
+              challenge: Uint8Array.from(atob(options.challenge.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)),
+              user: {
+                ...options.user,
+                id: Uint8Array.from(atob(options.user.id.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))
+              }
+            }
+          });
+
+          const finishRes = await fetch('/auth/passkey/register/finish', {
+            method: 'POST',
+            headers: { ...(await getHeaders()), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              credential: serializeCredential(credential),
+              challengeId,
+              name: prompt('为此Passkey命名:') || \`Passkey \${new Date().toLocaleDateString()}\`
+            })
+          });
+
+          if (!finishRes.ok) throw new Error('注册失败');
+
+          alert('Passkey注册成功！');
+          await loadPasskeys();
+        } catch (e) {
+          alert('注册失败: ' + e.message);
+        }
+      };
+
+      const deletePasskey = async (id) => {
+        try {
+          const res = await fetch(\`/auth/passkey/\${id}\`, {
+            method: 'DELETE',
+            headers: await getHeaders()
+          });
+
+          if (!res.ok) throw new Error('删除失败');
+
+          await loadPasskeys();
+        } catch (e) {
+          alert('删除失败: ' + e.message);
+        }
+      };
+
+      const serializeCredential = (credential) => {
+        const arrayBufferToBase64url = (buffer) => {
+          const bytes = new Uint8Array(buffer);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          return btoa(binary).split('+').join('-').split('/').join('_').split('=').join('');
+        };
+
+        return {
+          id: credential.id,
+          rawId: arrayBufferToBase64url(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: arrayBufferToBase64url(credential.response.clientDataJSON),
+            attestationObject: arrayBufferToBase64url(credential.response.attestationObject)
+          }
+        };
+      };
+
       // attach events
       const searchInput = document.getElementById('searchInput');
       searchInput?.addEventListener('input', (e) => {
@@ -1586,136 +1716,6 @@ export function generateFileExplorerScript(currentPath: string, initialItems: st
       } catch (e) {
         alert('禁用失败: ' + e.message);
       }
-    };
-
-    // Passkey Modal Functions
-    const openPasskeyModal = async () => {
-      openModal('passkeyModal', document.getElementById('menuPasskey'));
-      await loadPasskeys();
-    };
-
-    const loadPasskeys = async () => {
-      const content = document.getElementById('passkeyModalContent');
-
-      try {
-        const res = await fetch('/auth/passkeys', { headers: await getHeaders() });
-        const data = await res.json();
-
-        content.innerHTML = \`
-          <div class="space-y-4">
-            <button id="btnAddPasskey" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center space-x-2">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              <span>添加新Passkey</span>
-            </button>
-
-            \${data.passkeys.length === 0 ? \`
-              <div class="text-center py-8 text-gray-500 dark:text-gray-400">
-                <p class="text-sm">暂无Passkey</p>
-              </div>
-            \` : \`
-              <div class="space-y-2">
-                \${data.passkeys.map(pk => \`
-                  <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <div class="flex-1">
-                      <p class="text-sm font-medium text-gray-900 dark:text-white">\${pk.name}</p>
-                      <p class="text-xs text-gray-500 dark:text-gray-400">\${new Date(pk.createdAt).toLocaleDateString()}</p>
-                    </div>
-                    <button data-passkey-id="\${pk.id}" class="btn-delete-passkey p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    </button>
-                  </div>
-                \`).join('')}
-              </div>
-            \`}
-          </div>
-        \`;
-
-        document.getElementById('btnAddPasskey')?.addEventListener('click', registerPasskey);
-        document.querySelectorAll('.btn-delete-passkey').forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            const id = e.currentTarget.getAttribute('data-passkey-id');
-            if (confirm('确定删除此Passkey？')) {
-              await deletePasskey(id);
-            }
-          });
-        });
-      } catch (e) {
-        content.innerHTML = \`<p class="text-red-600">加载失败: \${e.message}</p>\`;
-      }
-    };
-
-    const registerPasskey = async () => {
-      try {
-        const startRes = await fetch('/auth/passkey/register/start', {
-          method: 'POST',
-          headers: await getHeaders()
-        });
-        const { options, challengeId } = await startRes.json();
-
-        const credential = await navigator.credentials.create({
-          publicKey: {
-            ...options,
-            challenge: Uint8Array.from(atob(options.challenge.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)),
-            user: {
-              ...options.user,
-              id: Uint8Array.from(atob(options.user.id.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))
-            }
-          }
-        });
-
-        const finishRes = await fetch('/auth/passkey/register/finish', {
-          method: 'POST',
-          headers: { ...(await getHeaders()), 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            credential: serializeCredential(credential),
-            challengeId,
-            name: prompt('为此Passkey命名:') || \`Passkey \${new Date().toLocaleDateString()}\`
-          })
-        });
-
-        if (!finishRes.ok) throw new Error('注册失败');
-
-        alert('Passkey注册成功！');
-        await loadPasskeys();
-      } catch (e) {
-        alert('注册失败: ' + e.message);
-      }
-    };
-
-    const deletePasskey = async (id) => {
-      try {
-        const res = await fetch(\`/auth/passkey/\${id}\`, {
-          method: 'DELETE',
-          headers: await getHeaders()
-        });
-
-        if (!res.ok) throw new Error('删除失败');
-
-        await loadPasskeys();
-      } catch (e) {
-        alert('删除失败: ' + e.message);
-      }
-    };
-
-    const serializeCredential = (credential) => {
-      const arrayBufferToBase64url = (buffer) => {
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        return btoa(binary).split('+').join('-').split('/').join('_').split('=').join('');
-      };
-
-      return {
-        id: credential.id,
-        rawId: arrayBufferToBase64url(credential.rawId),
-        type: credential.type,
-        response: {
-          clientDataJSON: arrayBufferToBase64url(credential.response.clientDataJSON),
-          attestationObject: arrayBufferToBase64url(credential.response.attestationObject)
-        }
-      };
     };
 
     // Drag & drop overlay
