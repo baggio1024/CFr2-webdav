@@ -5,8 +5,8 @@ account_id = "$ACCOUNT_ID"
 
 # Custom domain
 [[routes]]
-pattern = "webdav.amoze.cc"
-zone_name = "amoze.cc"
+pattern = "webdav.cngui.eu.org"
+zone_name = "cngui.eu.org"
 custom_domain = true
 
 [vars]
