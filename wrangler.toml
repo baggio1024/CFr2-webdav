@@ -57,3 +57,6 @@ id = "$TOTP_KV_ID"
 # [[kv_namespaces]]
 # binding = "AUTH_KV"
 # id = "$AUTH_KV_ID"
+
+[observability]
+enabled = true
