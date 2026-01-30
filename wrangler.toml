@@ -17,7 +17,7 @@ BUCKET_NAME = "$BUCKET_NAME"
 # Security configuration (Stage 1)
 # Generate PASSWORD_HASH using: npx wrangler dev --test-scheduled and call crypto.hashPassword()
 # Or use the generatePasswordHashForEnv() helper function
-#PASSWORD_HASH = "$PASSWORD_HASH"
+PASSWORD_HASH = "$PASSWORD_HASH"
 JWT_SECRET = "$JWT_SECRET"
 WORKER_URL = "$WORKER_URL"
 
