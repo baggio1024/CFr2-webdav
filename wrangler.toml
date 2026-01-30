@@ -60,3 +60,5 @@ id = "$TOTP_KV_ID"
 
 [observability]
 enabled = true
+
+
